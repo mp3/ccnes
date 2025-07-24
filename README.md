@@ -16,7 +16,17 @@ A Nintendo Entertainment System (NES) emulator written in Rust with support for 
   - Triangle channel
   - Noise channel
   - DMC channel (basic support)
-- **Mappers**: Support for mappers 0-3 (covers many classic games)
+- **Mappers**: Support for multiple mappers
+  - Mapper 0 (NROM) - Super Mario Bros., Donkey Kong
+  - Mapper 1 (MMC1) - The Legend of Zelda, Metroid
+  - Mapper 2 (UxROM) - Mega Man, Castlevania
+  - Mapper 3 (CNROM) - Gradius, Paperboy
+  - Mapper 4 (MMC3) - Super Mario Bros. 3, Mega Man 3-6
+  - Mapper 5 (MMC5) - Castlevania III
+  - Mapper 7 (AxROM) - Battletoads, Wizards & Warriors
+  - Mapper 9 (MMC2) - Mike Tyson's Punch-Out!!
+  - Mapper 11 (Color Dreams) - Crystal Mines, Metal Fighter
+  - Mapper 66 (GxROM) - Dragon Power, Doraemon
 - **Controllers**: Standard NES controller support
 
 ### Platforms
@@ -141,7 +151,9 @@ cargo test apu_
 
 ## Compatibility
 
-Supports iNES format ROM files (.nes) with mappers 0-3, which includes many classic NES games.
+Supports iNES format ROM files (.nes) with the following mappers:
+- Mappers 0-5, 7, 9, 11, 66
+- This covers approximately 85% of licensed NES games and many popular unlicensed titles
 
 ## License
 

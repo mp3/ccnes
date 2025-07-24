@@ -81,7 +81,11 @@ impl Cartridge {
             2 => Box::new(mappers::Mapper2::new(prg_size)),
             3 => Box::new(mappers::Mapper3::new()),
             4 => Box::new(mappers::Mapper4::new(prg_size, chr_size)),
+            5 => Box::new(mappers::Mapper5::new(prg_size, chr_size)),
             7 => Box::new(mappers::Mapper7::new(prg_size)),
+            9 => Box::new(mappers::Mapper9::new(prg_size, chr_size)),
+            11 => Box::new(mappers::Mapper11::new(prg_size, chr_size)),
+            66 => Box::new(mappers::Mapper66::new(prg_size, chr_size)),
             _ => return Err(CartridgeError::UnsupportedMapper(mapper_num)),
         };
         
