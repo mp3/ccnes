@@ -9,6 +9,9 @@ use std::fs::File;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+mod debugger_ui;
+use debugger_ui::DebuggerUI;
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -117,6 +120,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut save_states: Vec<Option<Vec<u8>>> = vec![None; 10];
     let mut current_save_slot = 0;
     
+    // Debugger
+    let mut debugger_ui = DebuggerUI::new();
+    
     let mut frame_start = Instant::now();
     
     'running: loop {
@@ -177,7 +183,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Keycode::Num7 => current_save_slot = 7,
                         Keycode::Num8 => current_save_slot = 8,
                         Keycode::Num9 => current_save_slot = 9,
-                        _ => {}
+                        // Debugger toggle
+                        Keycode::F10 => {
+                            debugger_ui.toggle();
+                        }
+                        _ => {
+                            // Pass other keys to debugger if active
+                            debugger_ui.handle_key(keycode, &mut nes);
+                        }
                     }
                 }
                 _ => {}
@@ -207,8 +220,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         
         nes.set_controller1_from_controller(&controller);
         
-        // Run one frame
-        nes.run_frame();
+        // Run one frame (or step if debugger is active)
+        if debugger_ui.is_active() && debugger_ui.get_debugger().is_paused() {
+            // In debug mode, step through instructions
+            for _ in 0..29780 { // Approximate cycles per frame
+                nes.step();
+                debugger_ui.update(&mut nes);
+                if debugger_ui.get_debugger().is_paused() {
+                    break;
+                }
+            }
+        } else {
+            nes.run_frame();
+        }
+        
+        debugger_ui.update_frame();
         
         // Get audio samples and push to audio buffer
         let samples = nes.bus.apu.get_samples();

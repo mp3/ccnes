@@ -90,3 +90,28 @@ The emulator targets 60 FPS with frame limiting. Audio is output at 44.1kHz mono
 ### Controller Not Responding
 - Check that the window has focus
 - Some keyboards may have limitations on simultaneous key presses
+
+## Debugger
+
+The emulator includes a built-in debugger for development and debugging ROMs.
+
+### Activating the Debugger
+Press `F10` to toggle the debugger on/off.
+
+### Debugger Controls
+| Key | Function |
+|-----|----------|
+| F1 | Show help |
+| F2 | Show CPU state |
+| F3 | Step one instruction |
+| F4 | Resume execution |
+| F5 | Pause execution |
+| F10 | Toggle debugger |
+
+### Features
+- Step-by-step execution
+- CPU state inspection
+- Breakpoint support
+- Memory examination
+- Instruction disassembly
+- Execution trace

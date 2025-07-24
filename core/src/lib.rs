@@ -6,6 +6,7 @@ pub mod controller;
 pub mod bus;
 pub mod nes;
 pub mod savestate;
+pub mod debugger;
 
 pub mod test_rom;
 
@@ -17,6 +18,7 @@ pub use controller::{Controller, ControllerButton};
 pub use bus::Bus;
 pub use nes::Nes;
 pub use savestate::{SaveState, SaveStateError};
+pub use debugger::{Debugger, DebuggerState, Breakpoint, BreakpointType, DebugInfo};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Clock {
