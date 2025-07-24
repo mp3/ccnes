@@ -41,11 +41,20 @@ impl Mapper for Mapper11 {
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr {
             0x8000..=0xFFFF => {
+                // Bus conflicts: The written data must match the data on the bus
+                let current_data = self.read_prg(addr, &[]);
+                let actual_value = if current_data != 0 {
+                    // Bus conflict occurred - data is ANDed together
+                    value & current_data
+                } else {
+                    value
+                };
+                
                 // Bits 0-1: PRG bank
-                self.prg_bank = (value & 0x03) as usize;
+                self.prg_bank = (actual_value & 0x03) as usize;
                 
                 // Bits 4-7: CHR bank
-                self.chr_bank = ((value >> 4) & 0x0F) as usize;
+                self.chr_bank = ((actual_value >> 4) & 0x0F) as usize;
                 
                 // Ensure banks don't exceed ROM sizes
                 let max_prg_bank = (self.prg_rom_size / 0x8000).saturating_sub(1);
