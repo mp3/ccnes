@@ -44,6 +44,12 @@ pub struct Ppu {
     bg_shift_attrib_lo: u16,
     bg_shift_attrib_hi: u16,
     
+    // Background latches
+    bg_next_tile_id: u8,
+    bg_next_tile_attrib: u8,
+    bg_next_tile_lsb: u8,
+    bg_next_tile_msb: u8,
+    
     // Sprite rendering
     sprite_count: u8,
     sprite_patterns: [u8; 8],
@@ -89,6 +95,10 @@ impl Ppu {
             bg_shift_pattern_hi: 0,
             bg_shift_attrib_lo: 0,
             bg_shift_attrib_hi: 0,
+            bg_next_tile_id: 0,
+            bg_next_tile_attrib: 0,
+            bg_next_tile_lsb: 0,
+            bg_next_tile_msb: 0,
             sprite_count: 0,
             sprite_patterns: [0; 8],
             sprite_positions: [0; 8],
@@ -119,11 +129,20 @@ impl Ppu {
                 let addr = self.v & 0x3FFF;
                 let mut value = self.buffer;
                 
-                if addr < 0x3F00 {
-                    self.buffer = self.read_byte(addr);
+                // Palette reads are immediate, everything else is buffered
+                if addr >= 0x3F00 {
+                    let mut palette_addr = (addr & 0x1F) as usize;
+                    if palette_addr >= 0x10 && palette_addr % 4 == 0 {
+                        palette_addr &= 0x0F;
+                    }
+                    value = self.palette[palette_addr];
+                    // Fill buffer with mirrored nametable data
+                    self.buffer = self.vram[self.mirror_address(addr - 0x1000) as usize];
+                } else if addr >= 0x2000 {
+                    self.buffer = self.vram[self.mirror_address(addr) as usize];
                 } else {
-                    self.buffer = self.read_byte(addr - 0x1000);
-                    value = self.read_byte(addr);
+                    // CHR reads need cartridge reference - return 0 for now
+                    self.buffer = 0;
                 }
                 
                 self.v = self.v.wrapping_add(self.addr_increment());
@@ -166,7 +185,21 @@ impl Ppu {
             }
             7 => {
                 // PPUDATA
-                self.write_byte(self.v & 0x3FFF, value);
+                // Note: This is a simplified version - in real implementation,
+                // we'd need the cartridge reference here
+                let addr = self.v & 0x3FFF;
+                if addr >= 0x3F00 {
+                    // Palette write
+                    let mut palette_addr = (addr & 0x1F) as usize;
+                    if palette_addr >= 0x10 && palette_addr % 4 == 0 {
+                        palette_addr &= 0x0F;
+                    }
+                    self.palette[palette_addr] = value;
+                } else if addr >= 0x2000 {
+                    // Name table write
+                    let mirrored = self.mirror_address(addr);
+                    self.vram[mirrored as usize] = value;
+                }
                 self.v = self.v.wrapping_add(self.addr_increment());
             }
             _ => {}
@@ -181,11 +214,19 @@ impl Ppu {
         }
     }
     
-    fn read_byte(&self, addr: u16) -> u8 {
+    pub fn read_chr(&self, addr: u16, cartridge: &Cartridge) -> u8 {
+        cartridge.read_chr(addr)
+    }
+    
+    pub fn write_chr(&mut self, addr: u16, value: u8, cartridge: &mut Cartridge) {
+        cartridge.write_chr(addr, value);
+    }
+    
+    fn read_byte(&self, addr: u16, cartridge: &Cartridge) -> u8 {
         match addr {
             0x0000..=0x1FFF => {
                 // Pattern tables - read from cartridge CHR
-                0  // Placeholder - should read from cartridge
+                self.read_chr(addr, cartridge)
             }
             0x2000..=0x3EFF => {
                 // Name tables and mirrors
@@ -203,11 +244,11 @@ impl Ppu {
         }
     }
     
-    fn write_byte(&mut self, addr: u16, value: u8) {
+    fn write_byte(&mut self, addr: u16, value: u8, cartridge: &mut Cartridge) {
         match addr {
             0x0000..=0x1FFF => {
                 // Pattern tables - write to cartridge CHR
-                // Placeholder - should write to cartridge
+                self.write_chr(addr, value, cartridge);
             }
             0x2000..=0x3EFF => {
                 // Name tables
@@ -239,7 +280,7 @@ impl Ppu {
         }
     }
     
-    pub fn step(&mut self, _cartridge: &Cartridge) -> bool {
+    pub fn step(&mut self, cartridge: &Cartridge) -> bool {
         // Visible scanlines (0-239)
         if self.scanline >= 0 && self.scanline < 240 {
             if self.scanline == 0 && self.cycle == 0 {
@@ -247,7 +288,32 @@ impl Ppu {
             }
             
             if self.cycle >= 1 && self.cycle <= 256 {
-                self.render_pixel();
+                self.render_pixel(cartridge);
+            }
+            
+            // Background fetch cycles
+            if (self.cycle >= 1 && self.cycle <= 256) || (self.cycle >= 321 && self.cycle <= 336) {
+                self.update_shifters();
+                
+                match (self.cycle - 1) % 8 {
+                    0 => {
+                        self.load_background_shifters();
+                        self.bg_next_tile_id = self.fetch_nametable_byte(cartridge);
+                    }
+                    2 => {
+                        self.bg_next_tile_attrib = self.fetch_attribute_byte(cartridge);
+                    }
+                    4 => {
+                        self.bg_next_tile_lsb = self.fetch_pattern_byte(0, cartridge);
+                    }
+                    6 => {
+                        self.bg_next_tile_msb = self.fetch_pattern_byte(1, cartridge);
+                    }
+                    7 => {
+                        self.increment_x();
+                    }
+                    _ => {}
+                }
             }
             
             if self.cycle == 256 {
@@ -262,8 +328,7 @@ impl Ppu {
             }
             
             if self.cycle == 338 || self.cycle == 340 {
-                self.bg_shift_pattern_lo = self.bg_shift_pattern_lo << 8;
-                self.bg_shift_pattern_hi = self.bg_shift_pattern_hi << 8;
+                self.fetch_nametable_byte(cartridge);
             }
             
             if self.scanline == 239 && self.cycle == 340 {
@@ -323,16 +388,38 @@ impl Ppu {
         nmi
     }
     
-    fn render_pixel(&mut self) {
+    fn render_pixel(&mut self, _cartridge: &Cartridge) {
         let x = (self.cycle - 1) as usize;
         let y = self.scanline as usize;
         
         if x < SCREEN_WIDTH && y < SCREEN_HEIGHT {
             let pixel_offset = y * SCREEN_WIDTH + x;
             
-            // For now, use palette entry 0 (universal background color)
-            // TODO: Implement actual background and sprite rendering
-            let palette_index = self.palette[0] & 0x3F;
+            let mut bg_pixel = 0;
+            let mut bg_palette = 0;
+            
+            // Background rendering enabled?
+            if self.mask & 0x08 != 0 {
+                // Get pixel from shift registers
+                let bit_mux = 0x8000 >> self.x;
+                let p0_pixel = ((self.bg_shift_pattern_lo & bit_mux) > 0) as u8;
+                let p1_pixel = ((self.bg_shift_pattern_hi & bit_mux) > 0) as u8;
+                bg_pixel = (p1_pixel << 1) | p0_pixel;
+                
+                let bg_pal0 = ((self.bg_shift_attrib_lo & bit_mux) > 0) as u8;
+                let bg_pal1 = ((self.bg_shift_attrib_hi & bit_mux) > 0) as u8;
+                bg_palette = (bg_pal1 << 1) | bg_pal0;
+            }
+            
+            // For now, just render background
+            // TODO: Add sprite rendering and priority
+            let palette_addr = if bg_pixel == 0 {
+                0  // Universal background color
+            } else {
+                (bg_palette << 2) | bg_pixel
+            };
+            
+            let palette_index = self.palette[palette_addr as usize] & 0x3F;
             let color = NES_PALETTE[palette_index as usize];
             
             self.framebuffer[pixel_offset] = color;
@@ -367,8 +454,40 @@ impl Ppu {
     }
     
     fn load_background_shifters(&mut self) {
-        self.bg_shift_pattern_lo = (self.bg_shift_pattern_lo & 0xFF00) | 0x00FF;
-        self.bg_shift_pattern_hi = (self.bg_shift_pattern_hi & 0xFF00) | 0x00FF;
+        self.bg_shift_pattern_lo = (self.bg_shift_pattern_lo & 0xFF00) | self.bg_next_tile_lsb as u16;
+        self.bg_shift_pattern_hi = (self.bg_shift_pattern_hi & 0xFF00) | self.bg_next_tile_msb as u16;
+        
+        self.bg_shift_attrib_lo = (self.bg_shift_attrib_lo & 0xFF00) | (if self.bg_next_tile_attrib & 0x01 != 0 { 0xFF } else { 0x00 });
+        self.bg_shift_attrib_hi = (self.bg_shift_attrib_hi & 0xFF00) | (if self.bg_next_tile_attrib & 0x02 != 0 { 0xFF } else { 0x00 });
+    }
+    
+    fn update_shifters(&mut self) {
+        if self.mask & 0x08 != 0 {
+            self.bg_shift_pattern_lo <<= 1;
+            self.bg_shift_pattern_hi <<= 1;
+            self.bg_shift_attrib_lo <<= 1;
+            self.bg_shift_attrib_hi <<= 1;
+        }
+    }
+    
+    fn fetch_nametable_byte(&self, cartridge: &Cartridge) -> u8 {
+        let addr = 0x2000 | (self.v & 0x0FFF);
+        self.read_byte(addr, cartridge)
+    }
+    
+    fn fetch_attribute_byte(&self, cartridge: &Cartridge) -> u8 {
+        let v = self.v;
+        let addr = 0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07);
+        let shift = ((v >> 4) & 4) | (v & 2);
+        let attrib = self.read_byte(addr, cartridge);
+        (attrib >> shift) & 0x03
+    }
+    
+    fn fetch_pattern_byte(&self, plane: u8, cartridge: &Cartridge) -> u8 {
+        let fine_y = (self.v >> 12) & 0x07;
+        let table = if self.ctrl & 0x10 != 0 { 0x1000 } else { 0x0000 };
+        let addr = table | ((self.bg_next_tile_id as u16) << 4) | ((plane as u16) << 3) | fine_y;
+        self.read_byte(addr, cartridge)
     }
     
     pub fn get_nmi_output(&self) -> bool {
@@ -381,5 +500,9 @@ impl Ppu {
         if value && !prev && self.nmi_occurred {
             // Rising edge of nmi_output when nmi_occurred is true
         }
+    }
+    
+    pub fn get_ctrl(&self) -> u8 {
+        self.ctrl
     }
 }

@@ -159,14 +159,14 @@ impl Cpu {
             Instruction::RTI => self.rti(bus),
             
             // Branches
-            Instruction::BCC => self.bcc(bus),
-            Instruction::BCS => self.bcs(bus),
-            Instruction::BEQ => self.beq(bus),
-            Instruction::BNE => self.bne(bus),
-            Instruction::BMI => self.bmi(bus),
-            Instruction::BPL => self.bpl(bus),
-            Instruction::BVC => self.bvc(bus),
-            Instruction::BVS => self.bvs(bus),
+            Instruction::BCC => self.bcc(bus, opcode.mode),
+            Instruction::BCS => self.bcs(bus, opcode.mode),
+            Instruction::BEQ => self.beq(bus, opcode.mode),
+            Instruction::BNE => self.bne(bus, opcode.mode),
+            Instruction::BMI => self.bmi(bus, opcode.mode),
+            Instruction::BPL => self.bpl(bus, opcode.mode),
+            Instruction::BVC => self.bvc(bus, opcode.mode),
+            Instruction::BVS => self.bvs(bus, opcode.mode),
             
             // Status Flag Changes
             Instruction::CLC => self.clc(),

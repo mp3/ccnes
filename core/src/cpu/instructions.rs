@@ -335,43 +335,51 @@ impl Cpu {
         }
     }
     
-    pub fn bcc(&mut self, bus: &mut impl CpuBus) {
-        let offset = bus.read(self.pc.wrapping_sub(1)) as i8;
+    pub fn bcc(&mut self, bus: &mut impl CpuBus, mode: AddressingMode) {
+        let (addr, _) = self.get_operand_address(mode, bus);
+        let offset = addr.wrapping_sub(self.pc) as i8;
         self.branch(!self.status.contains(StatusFlags::CARRY), offset);
     }
     
-    pub fn bcs(&mut self, bus: &mut impl CpuBus) {
-        let offset = bus.read(self.pc.wrapping_sub(1)) as i8;
+    pub fn bcs(&mut self, bus: &mut impl CpuBus, mode: AddressingMode) {
+        let (addr, _) = self.get_operand_address(mode, bus);
+        let offset = addr.wrapping_sub(self.pc) as i8;
         self.branch(self.status.contains(StatusFlags::CARRY), offset);
     }
     
-    pub fn beq(&mut self, bus: &mut impl CpuBus) {
-        let offset = bus.read(self.pc.wrapping_sub(1)) as i8;
+    pub fn beq(&mut self, bus: &mut impl CpuBus, mode: AddressingMode) {
+        let (addr, _) = self.get_operand_address(mode, bus);
+        let offset = addr.wrapping_sub(self.pc) as i8;
         self.branch(self.status.contains(StatusFlags::ZERO), offset);
     }
     
-    pub fn bne(&mut self, bus: &mut impl CpuBus) {
-        let offset = bus.read(self.pc.wrapping_sub(1)) as i8;
+    pub fn bne(&mut self, bus: &mut impl CpuBus, mode: AddressingMode) {
+        let (addr, _) = self.get_operand_address(mode, bus);
+        let offset = addr.wrapping_sub(self.pc) as i8;
         self.branch(!self.status.contains(StatusFlags::ZERO), offset);
     }
     
-    pub fn bmi(&mut self, bus: &mut impl CpuBus) {
-        let offset = bus.read(self.pc.wrapping_sub(1)) as i8;
+    pub fn bmi(&mut self, bus: &mut impl CpuBus, mode: AddressingMode) {
+        let (addr, _) = self.get_operand_address(mode, bus);
+        let offset = addr.wrapping_sub(self.pc) as i8;
         self.branch(self.status.contains(StatusFlags::NEGATIVE), offset);
     }
     
-    pub fn bpl(&mut self, bus: &mut impl CpuBus) {
-        let offset = bus.read(self.pc.wrapping_sub(1)) as i8;
+    pub fn bpl(&mut self, bus: &mut impl CpuBus, mode: AddressingMode) {
+        let (addr, _) = self.get_operand_address(mode, bus);
+        let offset = addr.wrapping_sub(self.pc) as i8;
         self.branch(!self.status.contains(StatusFlags::NEGATIVE), offset);
     }
     
-    pub fn bvc(&mut self, bus: &mut impl CpuBus) {
-        let offset = bus.read(self.pc.wrapping_sub(1)) as i8;
+    pub fn bvc(&mut self, bus: &mut impl CpuBus, mode: AddressingMode) {
+        let (addr, _) = self.get_operand_address(mode, bus);
+        let offset = addr.wrapping_sub(self.pc) as i8;
         self.branch(!self.status.contains(StatusFlags::OVERFLOW), offset);
     }
     
-    pub fn bvs(&mut self, bus: &mut impl CpuBus) {
-        let offset = bus.read(self.pc.wrapping_sub(1)) as i8;
+    pub fn bvs(&mut self, bus: &mut impl CpuBus, mode: AddressingMode) {
+        let (addr, _) = self.get_operand_address(mode, bus);
+        let offset = addr.wrapping_sub(self.pc) as i8;
         self.branch(self.status.contains(StatusFlags::OVERFLOW), offset);
     }
     

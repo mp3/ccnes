@@ -5,6 +5,8 @@ pub mod cartridge;
 pub mod bus;
 pub mod nes;
 
+pub mod test_rom;
+
 pub use cpu::Cpu;
 pub use ppu::Ppu;
 pub use apu::Apu;
