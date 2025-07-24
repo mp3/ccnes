@@ -7,6 +7,10 @@ const NOISE_PERIOD_TABLE: [u16; 16] = [
     4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
 ];
 
+const DMC_RATE_TABLE: [u16; 16] = [
+    428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
+];
+
 #[derive(Debug, Clone)]
 pub struct Apu {
     // Pulse channels
@@ -87,13 +91,57 @@ struct NoiseChannel {
     shift_register: u16,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct DmcChannel {
     enabled: bool,
+    
+    // Frequency
     rate: u8,
-    length: u16,
-    address: u16,
-    sample: u8,
+    timer: u16,
+    timer_period: u16,
+    
+    // Memory reader
+    sample_address: u16,
+    sample_length: u16,
+    current_address: u16,
+    bytes_remaining: u16,
+    
+    // Sample buffer
+    sample_buffer: Option<u8>,
+    
+    // Output unit
+    shift_register: u8,
+    bits_remaining: u8,
+    output_level: u8,
+    silence: bool,
+    
+    // Flags
+    loop_flag: bool,
+    irq_enabled: bool,
+    interrupt: bool,
+}
+
+impl Default for DmcChannel {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            rate: 0,
+            timer: 0,
+            timer_period: 0,
+            sample_address: 0xC000,
+            sample_length: 0,
+            current_address: 0xC000,
+            bytes_remaining: 0,
+            sample_buffer: None,
+            shift_register: 0,
+            bits_remaining: 0,
+            output_level: 0,
+            silence: true,
+            loop_flag: false,
+            irq_enabled: false,
+            interrupt: false,
+        }
+    }
 }
 
 impl Apu {
@@ -136,8 +184,11 @@ impl Apu {
                 if self.noise.length_counter > 0 {
                     status |= 0x08;
                 }
-                if self.dmc.length > 0 {
+                if self.dmc.bytes_remaining > 0 {
                     status |= 0x10;
+                }
+                if self.dmc.interrupt {
+                    status |= 0x80;
                 }
                 if self.frame_irq {
                     status |= 0x40;
@@ -190,6 +241,17 @@ impl Apu {
                 if !self.noise.enabled {
                     self.noise.length_counter = 0;
                 }
+                
+                if self.dmc.enabled && self.dmc.bytes_remaining == 0 {
+                    // Restart DMC
+                    self.dmc.current_address = self.dmc.sample_address;
+                    self.dmc.bytes_remaining = self.dmc.sample_length;
+                } else if !self.dmc.enabled {
+                    self.dmc.bytes_remaining = 0;
+                }
+                
+                // Clear DMC interrupt
+                self.dmc.interrupt = false;
             }
             0x4017 => {
                 // Frame counter
@@ -271,16 +333,27 @@ impl Apu {
     fn write_dmc(&mut self, reg: u16, value: u8) {
         match reg {
             0 => {
-                self.dmc.rate = value & 0xF;
+                // $4010: Flags and rate
+                self.dmc.irq_enabled = (value & 0x80) != 0;
+                self.dmc.loop_flag = (value & 0x40) != 0;
+                self.dmc.rate = value & 0x0F;
+                self.dmc.timer_period = DMC_RATE_TABLE[self.dmc.rate as usize];
+                
+                if !self.dmc.irq_enabled {
+                    self.dmc.interrupt = false;
+                }
             }
             1 => {
-                self.dmc.sample = value & 0x7F;
+                // $4011: Direct load
+                self.dmc.output_level = value & 0x7F;
             }
             2 => {
-                self.dmc.address = 0xC000 | ((value as u16) << 6);
+                // $4012: Sample address
+                self.dmc.sample_address = 0xC000 | ((value as u16) << 6);
             }
             3 => {
-                self.dmc.length = ((value as u16) << 4) | 1;
+                // $4013: Sample length
+                self.dmc.sample_length = ((value as u16) << 4) | 1;
             }
             _ => {}
         }
@@ -349,6 +422,9 @@ impl Apu {
         
         // Clock triangle every CPU cycle
         self.clock_triangle();
+        
+        // Clock DMC
+        self.clock_dmc();
     }
     
     fn clock_pulse(channel: &mut PulseChannel) {
@@ -390,6 +466,65 @@ impl Apu {
             self.noise.shift_register >>= 1;
             if feedback {
                 self.noise.shift_register |= 0x4000;
+            }
+        }
+    }
+    
+    fn clock_dmc(&mut self) {
+        // Clock output unit
+        if self.dmc.timer > 0 {
+            self.dmc.timer -= 1;
+        } else {
+            self.dmc.timer = self.dmc.timer_period;
+            
+            if !self.dmc.silence {
+                if (self.dmc.shift_register & 1) != 0 {
+                    // Increase level
+                    if self.dmc.output_level <= 125 {
+                        self.dmc.output_level += 2;
+                    }
+                } else {
+                    // Decrease level
+                    if self.dmc.output_level >= 2 {
+                        self.dmc.output_level -= 2;
+                    }
+                }
+            }
+            
+            self.dmc.shift_register >>= 1;
+            self.dmc.bits_remaining = self.dmc.bits_remaining.saturating_sub(1);
+            
+            if self.dmc.bits_remaining == 0 {
+                self.dmc.bits_remaining = 8;
+                
+                if let Some(sample) = self.dmc.sample_buffer {
+                    self.dmc.shift_register = sample;
+                    self.dmc.sample_buffer = None;
+                    self.dmc.silence = false;
+                } else {
+                    self.dmc.silence = true;
+                }
+            }
+        }
+        
+        // Check if we need to fetch a new sample
+        if self.dmc.sample_buffer.is_none() && self.dmc.bytes_remaining > 0 {
+            // In a real implementation, this would trigger a DMA read
+            // For now, we'll just simulate it with a dummy value
+            self.dmc.sample_buffer = Some(0x55); // Placeholder sample
+            self.dmc.current_address = self.dmc.current_address.wrapping_add(1);
+            if self.dmc.current_address == 0 {
+                self.dmc.current_address = 0x8000;
+            }
+            self.dmc.bytes_remaining -= 1;
+            
+            if self.dmc.bytes_remaining == 0 {
+                if self.dmc.loop_flag {
+                    self.dmc.current_address = self.dmc.sample_address;
+                    self.dmc.bytes_remaining = self.dmc.sample_length;
+                } else if self.dmc.irq_enabled {
+                    self.dmc.interrupt = true;
+                }
             }
         }
     }
@@ -512,7 +647,7 @@ impl Apu {
             let pulse2 = self.get_pulse_output(&self.pulse2);
             let triangle = self.get_triangle_output();
             let noise = self.get_noise_output();
-            let dmc = 0.0; // DMC not implemented yet
+            let dmc = self.dmc.output_level as f32;
             
             // Non-linear mixing approximation
             let pulse_out = if pulse1 + pulse2 > 0.0 {

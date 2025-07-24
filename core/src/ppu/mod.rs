@@ -32,6 +32,12 @@ pub struct Ppu {
     write_toggle: bool,
     buffer: u8,
     
+    // PPU open bus
+    open_bus: u8,
+    
+    // Suppress VBlank flag
+    suppress_vbl: bool,
+    
     // Internal latches and shift registers
     v: u16,        // Current VRAM address
     t: u16,        // Temporary VRAM address
@@ -89,6 +95,8 @@ impl Ppu {
             frame: 0,
             write_toggle: false,
             buffer: 0,
+            open_bus: 0,
+            suppress_vbl: false,
             v: 0,
             t: 0,
             x: 0,
@@ -117,61 +125,84 @@ impl Ppu {
     
     pub fn read_register(&mut self, reg: u8) -> u8 {
         match reg {
-            1 => {
-                // PPUMASK (write-only, but return the value for debugging)
-                self.mask
-            }
+            0 => self.open_bus, // PPUCTRL is write-only
+            1 => self.open_bus, // PPUMASK is write-only
             2 => {
                 // PPUSTATUS
-                let value = (self.status & 0xE0) | (self.buffer & 0x1F);
+                let value = (self.status & 0xE0) | (self.open_bus & 0x1F);
                 self.status &= !0x80;  // Clear vblank flag
                 self.w = false;         // Reset write toggle
+                
+                // VBlank suppression check
+                if self.scanline == 241 && self.cycle == 0 {
+                    self.suppress_vbl = true;
+                }
+                
+                self.open_bus = value;
                 value
             }
+            3 => self.open_bus, // OAMADDR is write-only
             4 => {
                 // OAMDATA
-                self.oam[self.oam_addr as usize]
+                let data = self.oam[self.oam_addr as usize];
+                // Special case: reading during rendering returns 0xFF for sprite attributes
+                if self.is_rendering() && self.cycle >= 1 && self.cycle <= 64 {
+                    self.open_bus = 0xFF;
+                    0xFF
+                } else {
+                    self.open_bus = data;
+                    data
+                }
             }
+            5 => self.open_bus, // PPUSCROLL is write-only
+            6 => self.open_bus, // PPUADDR is write-only
             7 => {
                 // PPUDATA
                 let addr = self.v & 0x3FFF;
                 let mut value = self.buffer;
                 
-                // Palette reads are immediate, everything else is buffered
+                // Palette reads are immediate
                 if addr >= 0x3F00 {
                     let mut palette_addr = (addr & 0x1F) as usize;
                     if palette_addr >= 0x10 && palette_addr % 4 == 0 {
                         palette_addr &= 0x0F;
                     }
-                    value = self.palette[palette_addr];
-                    // Fill buffer with mirrored nametable data
-                    self.buffer = self.vram[self.mirror_address(addr - 0x1000) as usize];
+                    value = self.palette[palette_addr] & (if self.mask & 0x01 != 0 { 0x30 } else { 0x3F });
+                    // Buffer gets nametable data at addr - 0x1000
+                    if addr < 0x3F00 {
+                        self.buffer = self.vram[self.mirror_address(addr - 0x1000) as usize];
+                    }
                 } else if addr >= 0x2000 {
                     self.buffer = self.vram[self.mirror_address(addr) as usize];
                 } else {
-                    // CHR reads need cartridge reference - return 0 for now
-                    self.buffer = 0;
+                    // CHR reads need cartridge reference
+                    self.buffer = self.open_bus; // Use open bus for now
                 }
                 
                 self.v = self.v.wrapping_add(self.addr_increment());
+                self.open_bus = value;
                 value
             }
-            _ => 0,
+            _ => self.open_bus,
         }
     }
     
     pub fn write_register(&mut self, reg: u8, value: u8) {
+        self.open_bus = value; // All writes update open bus
+        
         match reg {
             0 => {
                 self.ctrl = value;      // PPUCTRL
                 // Update NMI output based on bit 7
                 self.nmi_output = (value & 0x80) != 0;
+                // Update temporary VRAM address nametable bits
+                self.t = (self.t & 0xF3FF) | (((value as u16) & 0x03) << 10);
             }
             1 => self.mask = value,      // PPUMASK
             3 => self.oam_addr = value,  // OAMADDR
             4 => {
                 // OAMDATA
-                self.oam[self.oam_addr as usize] = value;
+                self.write_oam_byte(self.oam_addr, value);
                 self.oam_addr = self.oam_addr.wrapping_add(1);
             }
             5 => {
@@ -366,11 +397,15 @@ impl Ppu {
         // Vertical blanking scanlines (241-260)
         if self.scanline >= 241 && self.scanline <= 260 {
             if self.scanline == 241 && self.cycle == 1 {
-                self.status |= 0x80;  // Set vblank flag
-                self.nmi_occurred = true;
-                if self.nmi_output {
-                    // NMI will be triggered
+                // Check for VBlank suppression
+                if !self.suppress_vbl {
+                    self.status |= 0x80;  // Set vblank flag
+                    self.nmi_occurred = true;
+                    if self.nmi_output {
+                        // NMI will be triggered
+                    }
                 }
+                self.suppress_vbl = false; // Reset suppression flag
             }
         }
         
@@ -586,8 +621,21 @@ impl Ppu {
         self.ctrl
     }
     
+    fn is_rendering(&self) -> bool {
+        (self.mask & 0x18) != 0
+    }
+    
     pub fn write_oam_byte(&mut self, addr: u8, value: u8) {
         self.oam[addr as usize] = value;
+        
+        // OAM corruption during rendering
+        if self.is_rendering() && self.cycle >= 1 && self.cycle <= 64 {
+            // Writing to OAM during rendering can corrupt sprite data
+            // This is a hardware bug where the first 8 bytes get corrupted
+            for i in 0..8 {
+                self.oam[i] = (self.oam[i] & 0xE0) | ((addr >> 2) & 0x07);
+            }
+        }
     }
     
     fn evaluate_sprites(&mut self, scanline: i32) {
@@ -605,32 +653,53 @@ impl Ppu {
             self.sprite_attributes[i] = 0;
         }
         
-        // Evaluate all 64 sprites
-        for i in 0..64 {
-            let y = self.oam[i * 4] as i32;
-            let tile = self.oam[i * 4 + 1];
-            let attr = self.oam[i * 4 + 2];
-            let x = self.oam[i * 4 + 3];
+        // Clear secondary OAM with 0xFF
+        for i in 0..32 {
+            self.secondary_oam[i] = 0xFF;
+        }
+        
+        let mut n = 0; // OAM index
+        let mut m = 0; // OAM byte index
+        
+        // Sprite evaluation with accurate overflow behavior
+        while n < 64 && self.sprite_count < 8 {
+            let y = self.oam[n * 4] as i32;
             
+            // Check if sprite is in range
             let y_diff = scanline - y;
             if y_diff >= 0 && y_diff < sprite_height {
-                if self.sprite_count < 8 {
-                    let idx = self.sprite_count as usize;
-                    self.sprite_positions[idx] = x;
-                    self.sprite_attributes[idx] = attr;
-                    self.sprite_indexes[idx] = i as u8;
-                    
-                    // Store tile index for later pattern fetch
-                    self.secondary_oam[idx * 4] = y as u8;
-                    self.secondary_oam[idx * 4 + 1] = tile;
-                    self.secondary_oam[idx * 4 + 2] = attr;
-                    self.secondary_oam[idx * 4 + 3] = x;
-                    
-                    self.sprite_count += 1;
-                } else {
-                    // Sprite overflow
+                // Copy sprite to secondary OAM
+                let idx = self.sprite_count as usize;
+                for i in 0..4 {
+                    self.secondary_oam[idx * 4 + i] = self.oam[n * 4 + i];
+                }
+                
+                self.sprite_positions[idx] = self.oam[n * 4 + 3];
+                self.sprite_attributes[idx] = self.oam[n * 4 + 2];
+                self.sprite_indexes[idx] = n as u8;
+                
+                self.sprite_count += 1;
+            }
+            n += 1;
+        }
+        
+        // Sprite overflow evaluation (with hardware bug emulation)
+        if self.sprite_count == 8 && n < 64 {
+            // Continue evaluation with buggy behavior
+            while n < 64 {
+                let y = self.oam[n * 4 + m] as i32;
+                let y_diff = scanline - y;
+                
+                if y_diff >= 0 && y_diff < sprite_height {
+                    // Set sprite overflow flag
                     self.status |= 0x20;
                     break;
+                }
+                
+                // Increment with overflow bug
+                m = (m + 1) & 3;
+                if m == 0 {
+                    n += 1;
                 }
             }
         }
