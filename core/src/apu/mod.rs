@@ -1,3 +1,12 @@
+const LENGTH_TABLE: [u8; 32] = [
+    10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14,
+    12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30,
+];
+
+const NOISE_PERIOD_TABLE: [u16; 16] = [
+    4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
+];
+
 #[derive(Debug, Clone)]
 pub struct Apu {
     // Pulse channels
@@ -17,8 +26,15 @@ pub struct Apu {
     frame_counter: u8,
     frame_mode: bool,
     frame_irq: bool,
+    frame_irq_inhibit: bool,
     
     cycles: u32,
+    frame_cycles: u32,
+    
+    // Audio output
+    sample_rate: u32,
+    sample_counter: f32,
+    samples: Vec<f32>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -27,7 +43,19 @@ struct PulseChannel {
     duty: u8,
     length_counter: u8,
     timer: u16,
+    timer_period: u16,
     volume: u8,
+    constant_volume: bool,
+    envelope: u8,
+    envelope_start: bool,
+    envelope_period: u8,
+    envelope_value: u8,
+    sweep_enabled: bool,
+    sweep_period: u8,
+    sweep_negate: bool,
+    sweep_shift: u8,
+    sweep_reload: bool,
+    duty_position: u8,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -35,7 +63,12 @@ struct TriangleChannel {
     enabled: bool,
     length_counter: u8,
     timer: u16,
+    timer_period: u16,
     linear_counter: u8,
+    linear_counter_reload: u8,
+    linear_counter_reload_flag: bool,
+    control_flag: bool,
+    sequence_position: u8,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -43,8 +76,15 @@ struct NoiseChannel {
     enabled: bool,
     length_counter: u8,
     timer: u16,
+    timer_period: u16,
     volume: u8,
+    constant_volume: bool,
+    envelope: u8,
+    envelope_start: bool,
+    envelope_period: u8,
+    envelope_value: u8,
     mode: bool,
+    shift_register: u16,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -58,16 +98,24 @@ struct DmcChannel {
 
 impl Apu {
     pub fn new() -> Self {
+        let mut noise = NoiseChannel::default();
+        noise.shift_register = 1;
+        
         Self {
             pulse1: PulseChannel::default(),
             pulse2: PulseChannel::default(),
             triangle: TriangleChannel::default(),
-            noise: NoiseChannel::default(),
+            noise,
             dmc: DmcChannel::default(),
             frame_counter: 0,
             frame_mode: false,
             frame_irq: false,
+            frame_irq_inhibit: false,
             cycles: 0,
+            frame_cycles: 0,
+            sample_rate: 44100,
+            sample_counter: 0.0,
+            samples: Vec::new(),
         }
     }
     
@@ -156,17 +204,27 @@ impl Apu {
         match reg {
             0 => {
                 channel.duty = (value >> 6) & 0x3;
+                channel.envelope_period = value & 0xF;
+                channel.constant_volume = (value & 0x10) != 0;
                 channel.volume = value & 0xF;
             }
             1 => {
-                // Sweep unit (not implemented in this basic version)
+                // Sweep unit
+                channel.sweep_enabled = (value & 0x80) != 0;
+                channel.sweep_period = (value >> 4) & 0x7;
+                channel.sweep_negate = (value & 0x08) != 0;
+                channel.sweep_shift = value & 0x7;
+                channel.sweep_reload = true;
             }
             2 => {
-                channel.timer = (channel.timer & 0xFF00) | value as u16;
+                channel.timer_period = (channel.timer_period & 0xFF00) | value as u16;
             }
             3 => {
-                channel.timer = (channel.timer & 0x00FF) | ((value as u16 & 0x7) << 8);
-                channel.length_counter = value >> 3;
+                channel.timer_period = (channel.timer_period & 0x00FF) | ((value as u16 & 0x7) << 8);
+                channel.timer = channel.timer_period;
+                channel.length_counter = LENGTH_TABLE[(value >> 3) as usize];
+                channel.envelope_start = true;
+                channel.duty_position = 0;
             }
             _ => {}
         }
@@ -175,14 +233,17 @@ impl Apu {
     fn write_triangle(&mut self, reg: u16, value: u8) {
         match reg {
             0 => {
-                self.triangle.linear_counter = value & 0x7F;
+                self.triangle.control_flag = (value & 0x80) != 0;
+                self.triangle.linear_counter_reload = value & 0x7F;
             }
             2 => {
-                self.triangle.timer = (self.triangle.timer & 0xFF00) | value as u16;
+                self.triangle.timer_period = (self.triangle.timer_period & 0xFF00) | value as u16;
             }
             3 => {
-                self.triangle.timer = (self.triangle.timer & 0x00FF) | ((value as u16 & 0x7) << 8);
-                self.triangle.length_counter = value >> 3;
+                self.triangle.timer_period = (self.triangle.timer_period & 0x00FF) | ((value as u16 & 0x7) << 8);
+                self.triangle.timer = self.triangle.timer_period;
+                self.triangle.length_counter = LENGTH_TABLE[(value >> 3) as usize];
+                self.triangle.linear_counter_reload_flag = true;
             }
             _ => {}
         }
@@ -191,14 +252,17 @@ impl Apu {
     fn write_noise(&mut self, reg: u16, value: u8) {
         match reg {
             0 => {
+                self.noise.envelope_period = value & 0xF;
+                self.noise.constant_volume = (value & 0x10) != 0;
                 self.noise.volume = value & 0xF;
             }
             2 => {
                 self.noise.mode = (value & 0x80) != 0;
-                self.noise.timer = value as u16 & 0xF;
+                self.noise.timer_period = NOISE_PERIOD_TABLE[(value & 0xF) as usize];
             }
             3 => {
-                self.noise.length_counter = value >> 3;
+                self.noise.length_counter = LENGTH_TABLE[(value >> 3) as usize];
+                self.noise.envelope_start = true;
             }
             _ => {}
         }
@@ -225,7 +289,315 @@ impl Apu {
     pub fn step(&mut self) {
         self.cycles += 1;
         
-        // Frame counter logic would go here
-        // This is a simplified version
+        // Clock timers
+        self.clock_timers();
+        
+        // Frame counter
+        self.frame_cycles += 1;
+        
+        if !self.frame_mode {
+            // 4-step sequence (60 Hz)
+            match self.frame_cycles {
+                7457 => self.clock_quarter_frame(),
+                14913 => {
+                    self.clock_quarter_frame();
+                    self.clock_half_frame();
+                }
+                22371 => self.clock_quarter_frame(),
+                29829 => {
+                    self.clock_quarter_frame();
+                    self.clock_half_frame();
+                    if !self.frame_irq_inhibit {
+                        self.frame_irq = true;
+                    }
+                    self.frame_cycles = 0;
+                }
+                _ => {}
+            }
+        } else {
+            // 5-step sequence (48 Hz)
+            match self.frame_cycles {
+                7457 => self.clock_quarter_frame(),
+                14913 => {
+                    self.clock_quarter_frame();
+                    self.clock_half_frame();
+                }
+                22371 => self.clock_quarter_frame(),
+                29829 => {
+                    // Do nothing
+                }
+                37281 => {
+                    self.clock_quarter_frame();
+                    self.clock_half_frame();
+                    self.frame_cycles = 0;
+                }
+                _ => {}
+            }
+        }
+        
+        // Generate sample
+        self.generate_sample();
+    }
+    
+    fn clock_timers(&mut self) {
+        // Clock pulse channels every other CPU cycle
+        if self.cycles % 2 == 0 {
+            Self::clock_pulse(&mut self.pulse1);
+            Self::clock_pulse(&mut self.pulse2);
+            self.clock_noise();
+        }
+        
+        // Clock triangle every CPU cycle
+        self.clock_triangle();
+    }
+    
+    fn clock_pulse(channel: &mut PulseChannel) {
+        if channel.timer > 0 {
+            channel.timer -= 1;
+        } else {
+            channel.timer = channel.timer_period;
+            channel.duty_position = (channel.duty_position + 1) % 8;
+        }
+    }
+    
+    fn clock_triangle(&mut self) {
+        if self.triangle.linear_counter > 0 && self.triangle.length_counter > 0 {
+            if self.triangle.timer > 0 {
+                self.triangle.timer -= 1;
+            } else {
+                self.triangle.timer = self.triangle.timer_period;
+                if self.triangle.length_counter > 0 && self.triangle.linear_counter > 0 {
+                    self.triangle.sequence_position = (self.triangle.sequence_position + 1) % 32;
+                }
+            }
+        }
+    }
+    
+    fn clock_noise(&mut self) {
+        if self.noise.timer > 0 {
+            self.noise.timer -= 1;
+        } else {
+            self.noise.timer = self.noise.timer_period;
+            
+            let feedback = if self.noise.mode {
+                // Mode 1: feedback from bits 0 and 6
+                ((self.noise.shift_register & 1) ^ ((self.noise.shift_register >> 6) & 1)) != 0
+            } else {
+                // Mode 0: feedback from bits 0 and 1
+                ((self.noise.shift_register & 1) ^ ((self.noise.shift_register >> 1) & 1)) != 0
+            };
+            
+            self.noise.shift_register >>= 1;
+            if feedback {
+                self.noise.shift_register |= 0x4000;
+            }
+        }
+    }
+    
+    fn clock_quarter_frame(&mut self) {
+        // Clock envelopes
+        Self::clock_envelope_pulse(&mut self.pulse1);
+        Self::clock_envelope_pulse(&mut self.pulse2);
+        Self::clock_envelope_noise(&mut self.noise);
+        
+        // Clock triangle linear counter
+        if self.triangle.linear_counter_reload_flag {
+            self.triangle.linear_counter = self.triangle.linear_counter_reload;
+        } else if self.triangle.linear_counter > 0 {
+            self.triangle.linear_counter -= 1;
+        }
+        
+        if !self.triangle.control_flag {
+            self.triangle.linear_counter_reload_flag = false;
+        }
+    }
+    
+    fn clock_half_frame(&mut self) {
+        // Clock length counters
+        Self::clock_length_counter(&mut self.pulse1.length_counter);
+        Self::clock_length_counter(&mut self.pulse2.length_counter);
+        Self::clock_length_counter(&mut self.triangle.length_counter);
+        Self::clock_length_counter(&mut self.noise.length_counter);
+        
+        // Clock sweep units  
+        let mut pulse1 = self.pulse1.clone();
+        let mut pulse2 = self.pulse2.clone();
+        self.clock_sweep(&mut pulse1, false);
+        self.clock_sweep(&mut pulse2, true);
+        self.pulse1 = pulse1;
+        self.pulse2 = pulse2;
+    }
+    
+    fn clock_envelope_pulse(channel: &mut PulseChannel) {
+        if channel.envelope_start {
+            channel.envelope_value = 15;
+            channel.envelope = channel.envelope_period;
+            channel.envelope_start = false;
+        } else if channel.envelope > 0 {
+            channel.envelope -= 1;
+        } else {
+            if channel.envelope_value > 0 {
+                channel.envelope_value -= 1;
+            } else if channel.envelope_period > 0 {
+                channel.envelope_value = 15;
+            }
+            channel.envelope = channel.envelope_period;
+        }
+    }
+    
+    fn clock_envelope_noise(channel: &mut NoiseChannel) {
+        if channel.envelope_start {
+            channel.envelope_value = 15;
+            channel.envelope = channel.envelope_period;
+            channel.envelope_start = false;
+        } else if channel.envelope > 0 {
+            channel.envelope -= 1;
+        } else {
+            if channel.envelope_value > 0 {
+                channel.envelope_value -= 1;
+            } else if channel.envelope_period > 0 {
+                channel.envelope_value = 15;
+            }
+            channel.envelope = channel.envelope_period;
+        }
+    }
+    
+    fn clock_length_counter(counter: &mut u8) {
+        if *counter > 0 {
+            *counter -= 1;
+        }
+    }
+    
+    fn clock_sweep(&mut self, channel: &mut PulseChannel, second_channel: bool) {
+        // Note: In a real implementation, the divider would be stored in the channel
+        // For now, we'll simplify and just use the period directly
+        
+        if channel.sweep_reload {
+            channel.sweep_reload = false;
+            if channel.sweep_enabled {
+                self.sweep_target(channel, second_channel);
+            }
+        }
+    }
+    
+    fn sweep_target(&mut self, channel: &mut PulseChannel, second_channel: bool) {
+        let period = channel.timer_period;
+        let mut change = period >> channel.sweep_shift;
+        
+        if channel.sweep_negate {
+            if second_channel {
+                change = (!change).wrapping_add(1);
+            } else {
+                change = !change;
+            }
+        }
+        
+        let target = period.wrapping_add(change);
+        if target < 0x800 && channel.timer_period >= 8 {
+            channel.timer_period = target;
+        }
+    }
+    
+    fn generate_sample(&mut self) {
+        // Sample rate conversion
+        let cpu_rate = 1789773.0; // NTSC CPU frequency
+        let sample_period = cpu_rate / self.sample_rate as f32;
+        
+        self.sample_counter += 1.0;
+        if self.sample_counter >= sample_period {
+            self.sample_counter -= sample_period;
+            
+            // Mix channels
+            let pulse1 = self.get_pulse_output(&self.pulse1);
+            let pulse2 = self.get_pulse_output(&self.pulse2);
+            let triangle = self.get_triangle_output();
+            let noise = self.get_noise_output();
+            let dmc = 0.0; // DMC not implemented yet
+            
+            // Non-linear mixing approximation
+            let pulse_out = if pulse1 + pulse2 > 0.0 {
+                95.88 / ((8128.0 / (pulse1 + pulse2)) + 100.0)
+            } else {
+                0.0
+            };
+            
+            let tnd_out = if triangle + noise + dmc > 0.0 {
+                159.79 / ((1.0 / ((triangle / 8227.0) + (noise / 12241.0) + (dmc / 22638.0))) + 100.0)
+            } else {
+                0.0
+            };
+            
+            let sample = pulse_out + tnd_out;
+            self.samples.push(sample);
+        }
+    }
+    
+    fn get_pulse_output(&self, channel: &PulseChannel) -> f32 {
+        if !channel.enabled || channel.length_counter == 0 {
+            return 0.0;
+        }
+        
+        if channel.timer_period < 8 || channel.timer_period > 0x7FF {
+            return 0.0;
+        }
+        
+        const DUTY_TABLE: [[u8; 8]; 4] = [
+            [0, 1, 0, 0, 0, 0, 0, 0],
+            [0, 1, 1, 0, 0, 0, 0, 0],
+            [0, 1, 1, 1, 1, 0, 0, 0],
+            [1, 0, 0, 1, 1, 1, 1, 1],
+        ];
+        
+        let duty_value = DUTY_TABLE[channel.duty as usize][channel.duty_position as usize];
+        if duty_value == 0 {
+            return 0.0;
+        }
+        
+        let volume = if channel.constant_volume {
+            channel.volume
+        } else {
+            channel.envelope_value
+        };
+        
+        volume as f32
+    }
+    
+    fn get_triangle_output(&self) -> f32 {
+        if !self.triangle.enabled || self.triangle.length_counter == 0 || self.triangle.linear_counter == 0 {
+            return 0.0;
+        }
+        
+        if self.triangle.timer_period < 2 {
+            return 0.0;
+        }
+        
+        const TRIANGLE_TABLE: [u8; 32] = [
+            15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+        ];
+        
+        TRIANGLE_TABLE[self.triangle.sequence_position as usize] as f32
+    }
+    
+    fn get_noise_output(&self) -> f32 {
+        if !self.noise.enabled || self.noise.length_counter == 0 {
+            return 0.0;
+        }
+        
+        if self.noise.shift_register & 1 != 0 {
+            return 0.0;
+        }
+        
+        let volume = if self.noise.constant_volume {
+            self.noise.volume
+        } else {
+            self.noise.envelope_value
+        };
+        
+        volume as f32
+    }
+    
+    pub fn get_samples(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.samples)
     }
 }
