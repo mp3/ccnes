@@ -1,0 +1,15 @@
+[package]
+name = "ccnes-core"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bitflags = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

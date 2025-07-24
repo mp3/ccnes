@@ -1,0 +1,18 @@
+[package]
+name = "ccnes"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ccnes"
+path = "src/main.rs"
+
+[dependencies]
+ccnes-core = { path = "../core" }
+sdl2 = { workspace = true }
+env_logger = { workspace = true }
+clap = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
