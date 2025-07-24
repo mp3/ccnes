@@ -41,7 +41,7 @@ impl Mapper for Mapper1 {
                 let bank = if self.control & 0x08 != 0 {
                     // 16KB mode - fixed to last bank or switchable
                     if self.control & 0x04 != 0 {
-                        (prg_rom.len() / 0x4000 - 1)
+                        prg_rom.len() / 0x4000 - 1
                     } else {
                         self.prg_bank as usize
                     }

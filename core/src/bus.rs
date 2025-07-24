@@ -1,15 +1,18 @@
-use crate::cpu::CpuBus;
+use crate::cpu::{Cpu, CpuBus};
 use crate::ppu::Ppu;
 use crate::apu::Apu;
 use crate::cartridge::Cartridge;
 
 pub struct Bus {
     ram: [u8; 0x800],      // 2KB internal RAM
-    ppu: Ppu,
-    apu: Apu,
-    cartridge: Option<Cartridge>,
+    pub ppu: Ppu,
+    pub apu: Apu,
+    pub cartridge: Option<Cartridge>,
     controller1: u8,
     controller2: u8,
+    controller1_state: u8,
+    controller2_state: u8,
+    controller_strobe: bool,
 }
 
 impl Bus {
@@ -21,6 +24,9 @@ impl Bus {
             cartridge: None,
             controller1: 0,
             controller2: 0,
+            controller1_state: 0,
+            controller2_state: 0,
+            controller_strobe: false,
         }
     }
     
@@ -29,16 +35,35 @@ impl Bus {
     }
     
     pub fn set_controller1(&mut self, state: u8) {
-        self.controller1 = state;
+        self.controller1_state = state;
     }
     
     pub fn set_controller2(&mut self, state: u8) {
-        self.controller2 = state;
+        self.controller2_state = state;
+    }
+    
+    pub fn tick(&mut self, cpu: &mut Cpu) {
+        // PPU runs 3 times per CPU cycle
+        let mut nmi = false;
+        for _ in 0..3 {
+            if let Some(ref cartridge) = self.cartridge {
+                if self.ppu.step(cartridge) {
+                    nmi = true;
+                }
+            }
+        }
+        
+        if nmi {
+            cpu.trigger_nmi();
+        }
+        
+        // APU runs once per CPU cycle
+        self.apu.step();
     }
 }
 
 impl CpuBus for Bus {
-    fn read(&self, addr: u16) -> u8 {
+    fn read(&mut self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x1FFF => {
                 // RAM and mirrors
@@ -54,11 +79,23 @@ impl CpuBus for Bus {
             }
             0x4016 => {
                 // Controller 1
-                self.controller1
+                if self.controller_strobe {
+                    self.controller1 = self.controller1_state;
+                }
+                let bit = self.controller1 & 0x01;
+                self.controller1 >>= 1;
+                self.controller1 |= 0x80;
+                bit
             }
             0x4017 => {
                 // Controller 2
-                self.controller2
+                if self.controller_strobe {
+                    self.controller2 = self.controller2_state;
+                }
+                let bit = self.controller2 & 0x01;
+                self.controller2 >>= 1;
+                self.controller2 |= 0x80;
+                bit
             }
             0x4018..=0x401F => {
                 // APU and I/O functionality that is normally disabled
@@ -90,8 +127,12 @@ impl CpuBus for Bus {
                 self.apu.write_register(addr, value);
             }
             0x4016 => {
-                // Controller 1
-                // Writing here triggers controller polling
+                // Controller strobe
+                self.controller_strobe = value & 0x01 != 0;
+                if self.controller_strobe {
+                    self.controller1 = self.controller1_state;
+                    self.controller2 = self.controller2_state;
+                }
             }
             0x4017 => {
                 // APU Frame Counter

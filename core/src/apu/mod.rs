@@ -104,11 +104,11 @@ impl Apu {
         match addr {
             0x4000..=0x4003 => {
                 // Pulse 1
-                self.write_pulse(&mut self.pulse1, addr & 0x3, value);
+                Self::write_pulse(&mut self.pulse1, addr & 0x3, value);
             }
             0x4004..=0x4007 => {
                 // Pulse 2
-                self.write_pulse(&mut self.pulse2, addr & 0x3, value);
+                Self::write_pulse(&mut self.pulse2, addr & 0x3, value);
             }
             0x4008..=0x400B => {
                 // Triangle
@@ -152,7 +152,7 @@ impl Apu {
         }
     }
     
-    fn write_pulse(&mut self, channel: &mut PulseChannel, reg: u16, value: u8) {
+    fn write_pulse(channel: &mut PulseChannel, reg: u16, value: u8) {
         match reg {
             0 => {
                 channel.duty = (value >> 6) & 0x3;

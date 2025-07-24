@@ -105,10 +105,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Run one frame
         nes.run_frame();
         
-        // TODO: Get actual framebuffer from PPU
-        // For now, just fill with a test pattern
-        for i in 0..framebuffer.len() {
-            framebuffer[i] = (i % 255) as u8;
+        // Get framebuffer from PPU and convert to RGB24
+        let nes_framebuffer = nes.get_framebuffer();
+        for y in 0..NES_HEIGHT as usize {
+            for x in 0..NES_WIDTH as usize {
+                let pixel_index = y * NES_WIDTH as usize + x;
+                let color = nes_framebuffer[pixel_index];
+                
+                // Extract RGB components from 0x00RRGGBB format
+                let r = ((color >> 16) & 0xFF) as u8;
+                let g = ((color >> 8) & 0xFF) as u8;
+                let b = (color & 0xFF) as u8;
+                
+                let offset = pixel_index * 3;
+                framebuffer[offset] = r;
+                framebuffer[offset + 1] = g;
+                framebuffer[offset + 2] = b;
+            }
         }
         
         // Update texture and render

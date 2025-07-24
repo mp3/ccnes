@@ -1,9 +1,9 @@
 use crate::{Cpu, Ppu, Apu, Bus, Cartridge, Clock};
 
 pub struct Nes {
-    cpu: Cpu,
-    bus: Bus,
-    clock: Clock,
+    pub cpu: Cpu,
+    pub bus: Bus,
+    pub clock: Clock,
 }
 
 impl Nes {
@@ -30,7 +30,7 @@ impl Nes {
     }
     
     pub fn reset(&mut self) {
-        self.cpu.reset(&self.bus);
+        self.cpu.reset(&mut self.bus);
         self.clock = Clock {
             cpu_cycles: 0,
             ppu_cycles: 0,
@@ -42,15 +42,10 @@ impl Nes {
         let cpu_cycles = self.cpu.step(&mut self.bus);
         self.clock.cpu_cycles += cpu_cycles as u64;
         
-        // PPU runs at 3x CPU speed
-        for _ in 0..(cpu_cycles * 3) {
-            // In a full implementation, we'd step the PPU here
-            self.clock.ppu_cycles += 1;
-        }
-        
-        // APU runs at CPU speed
+        // Bus tick handles PPU and APU timing
         for _ in 0..cpu_cycles {
-            // In a full implementation, we'd step the APU here
+            self.bus.tick(&mut self.cpu);
+            self.clock.ppu_cycles += 3;
             self.clock.apu_cycles += 1;
         }
     }
@@ -61,6 +56,10 @@ impl Nes {
         while self.clock.cpu_cycles < target_cycles {
             self.step();
         }
+    }
+    
+    pub fn get_framebuffer(&self) -> &[u32] {
+        &self.bus.ppu.framebuffer
     }
     
     pub fn set_controller1(&mut self, state: u8) {

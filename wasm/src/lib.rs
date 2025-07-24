@@ -55,15 +55,23 @@ impl WasmNes {
     pub fn run_frame(&mut self) {
         self.nes.run_frame();
         
-        // TODO: Get actual pixel data from PPU
-        // For now, generate a test pattern
+        // Get framebuffer from PPU and convert to RGBA
+        let nes_framebuffer = self.nes.get_framebuffer();
         for y in 0..240 {
             for x in 0..256 {
-                let idx = (y * 256 + x) * 4;
-                self.framebuffer[idx] = ((x + y) % 256) as u8;     // R
-                self.framebuffer[idx + 1] = (x % 256) as u8;       // G
-                self.framebuffer[idx + 2] = (y % 256) as u8;       // B
-                self.framebuffer[idx + 3] = 255;                   // A
+                let pixel_index = y * 256 + x;
+                let color = nes_framebuffer[pixel_index];
+                
+                // Extract RGB components from 0x00RRGGBB format
+                let r = ((color >> 16) & 0xFF) as u8;
+                let g = ((color >> 8) & 0xFF) as u8;
+                let b = (color & 0xFF) as u8;
+                
+                let idx = pixel_index * 4;
+                self.framebuffer[idx] = r;
+                self.framebuffer[idx + 1] = g;
+                self.framebuffer[idx + 2] = b;
+                self.framebuffer[idx + 3] = 255;  // Alpha
             }
         }
     }
