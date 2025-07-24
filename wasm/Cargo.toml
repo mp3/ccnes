@@ -31,6 +31,10 @@ features = [
     "FileReader",
     "Blob",
     "console",
+    "AudioContext",
+    "AudioNode",
+    "AudioDestinationNode",
+    "ScriptProcessorNode",
 ]
 
 [dependencies.js-sys]

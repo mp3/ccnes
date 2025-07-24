@@ -1,9 +1,7 @@
-use ccnes_core::{Cartridge, Nes};
+use ccnes_core::{Cartridge, Nes, Controller, ControllerButton};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::Clamped;
 use web_sys::{CanvasRenderingContext2d, ImageData};
-use std::cell::RefCell;
-use std::rc::Rc;
 
 #[wasm_bindgen]
 extern "C" {
@@ -19,6 +17,9 @@ macro_rules! console_log {
 pub struct WasmNes {
     nes: Nes,
     framebuffer: Vec<u8>,
+    controller1: Controller,
+    #[allow(dead_code)]
+    controller2: Controller,
 }
 
 #[wasm_bindgen]
@@ -33,6 +34,8 @@ impl WasmNes {
         Self {
             nes: Nes::new(),
             framebuffer: vec![0; 256 * 240 * 4], // RGBA format
+            controller1: Controller::new(),
+            controller2: Controller::new(),
         }
     }
     
@@ -52,7 +55,11 @@ impl WasmNes {
         self.nes.reset();
     }
     
-    pub fn run_frame(&mut self) {
+    pub fn get_sample_rate(&self) -> u32 {
+        44100
+    }
+    
+    pub fn run_frame(&mut self) -> js_sys::Float32Array {
         self.nes.run_frame();
         
         // Get framebuffer from PPU and convert to RGBA
@@ -74,6 +81,12 @@ impl WasmNes {
                 self.framebuffer[idx + 3] = 255;  // Alpha
             }
         }
+        
+        // Get audio samples
+        let samples = self.nes.bus.apu.get_samples();
+        let audio_array = js_sys::Float32Array::new_with_length(samples.len() as u32);
+        audio_array.copy_from(&samples);
+        audio_array
     }
     
     pub fn render(&self, ctx: &CanvasRenderingContext2d) -> Result<(), JsValue> {
@@ -95,35 +108,32 @@ impl WasmNes {
         }
     }
     
-    pub fn key_down(&mut self, key_code: &str) -> u8 {
-        self.update_controller(key_code, true)
+    pub fn key_down(&mut self, key_code: &str) {
+        self.update_controller(key_code, true);
     }
     
-    pub fn key_up(&mut self, key_code: &str) -> u8 {
-        self.update_controller(key_code, false)
+    pub fn key_up(&mut self, key_code: &str) {
+        self.update_controller(key_code, false);
     }
     
-    fn update_controller(&mut self, key_code: &str, pressed: bool) -> u8 {
-        let mut state = 0u8;
-        
+    fn update_controller(&mut self, key_code: &str, pressed: bool) {
         // Map keyboard to NES controller
-        let bit = match key_code {
-            "KeyZ" | "KeyA" => 0x80,  // A
-            "KeyX" | "KeyS" => 0x40,  // B
-            "ShiftRight" => 0x20,      // Select
-            "Enter" => 0x10,           // Start
-            "ArrowUp" => 0x08,         // Up
-            "ArrowDown" => 0x04,       // Down
-            "ArrowLeft" => 0x02,       // Left
-            "ArrowRight" => 0x01,      // Right
-            _ => return state,
+        let button = match key_code {
+            "KeyZ" | "KeyA" => Some(ControllerButton::A),
+            "KeyX" | "KeyS" => Some(ControllerButton::B),
+            "ShiftRight" => Some(ControllerButton::SELECT),
+            "Enter" => Some(ControllerButton::START),
+            "ArrowUp" => Some(ControllerButton::UP),
+            "ArrowDown" => Some(ControllerButton::DOWN),
+            "ArrowLeft" => Some(ControllerButton::LEFT),
+            "ArrowRight" => Some(ControllerButton::RIGHT),
+            _ => None,
         };
         
-        if pressed {
-            state |= bit;
+        if let Some(button) = button {
+            self.controller1.set_button(button, pressed);
+            self.nes.set_controller1_from_controller(&self.controller1);
         }
-        
-        state
     }
 }
 

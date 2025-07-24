@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>CCNES - NES Emulator</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #222;
+            color: #fff;
+            margin: 0;
+            padding: 20px;
+        }
+        
+        h1 {
+            margin-bottom: 20px;
+        }
+        
+        #canvas {
+            border: 2px solid #444;
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+            width: 512px;
+            height: 480px;
+        }
+        
+        #controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+        }
+        
+        button {
+            padding: 10px 20px;
+            background-color: #444;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        
+        button:hover {
+            background-color: #555;
+        }
+        
+        #file-input {
+            display: none;
+        }
+        
+        #info {
+            margin-top: 20px;
+            text-align: center;
+            line-height: 1.5;
+        }
+        
+        .controls-info {
+            margin-top: 20px;
+            background-color: #333;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        
+        .controls-info h3 {
+            margin-top: 0;
+        }
+        
+        .controls-grid {
+            display: grid;
+            grid-template-columns: auto auto;
+            gap: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>CCNES - NES Emulator</h1>
+    
+    <canvas id="canvas" width="256" height="240"></canvas>
+    
+    <div id="controls">
+        <button id="load-rom">Load ROM</button>
+        <button id="reset">Reset</button>
+        <button id="pause">Pause</button>
+        <input type="file" id="file-input" accept=".nes">
+    </div>
+    
+    <div id="info">
+        <p>FPS: <span id="fps">0</span></p>
+    </div>
+    
+    <div class="controls-info">
+        <h3>Controls</h3>
+        <div class="controls-grid">
+            <div>Arrow Keys</div><div>D-Pad</div>
+            <div>Z / A</div><div>A Button</div>
+            <div>X / S</div><div>B Button</div>
+            <div>Enter</div><div>Start</div>
+            <div>Right Shift</div><div>Select</div>
+        </div>
+    </div>
+    
+    <script type="module">
+        import init, { WasmNes } from './pkg/ccnes_wasm.js';
+        
+        let nes = null;
+        let canvas = null;
+        let ctx = null;
+        let audioContext = null;
+        let scriptProcessor = null;
+        let running = false;
+        let lastTime = 0;
+        let frameCount = 0;
+        let fpsUpdateTime = 0;
+        
+        async function main() {
+            await init();
+            
+            canvas = document.getElementById('canvas');
+            ctx = canvas.getContext('2d');
+            
+            nes = new WasmNes();
+            
+            // Set up file input
+            const fileInput = document.getElementById('file-input');
+            document.getElementById('load-rom').addEventListener('click', () => {
+                fileInput.click();
+            });
+            
+            fileInput.addEventListener('change', async (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const romData = new Uint8Array(arrayBuffer);
+                    
+                    try {
+                        nes.load_rom(romData);
+                        startEmulation();
+                    } catch (error) {
+                        alert('Failed to load ROM: ' + error);
+                    }
+                }
+            });
+            
+            // Set up controls
+            document.getElementById('reset').addEventListener('click', () => {
+                if (nes) {
+                    nes.reset();
+                }
+            });
+            
+            document.getElementById('pause').addEventListener('click', () => {
+                running = !running;
+                document.getElementById('pause').textContent = running ? 'Pause' : 'Resume';
+            });
+            
+            // Set up keyboard input
+            document.addEventListener('keydown', (e) => {
+                if (nes) {
+                    nes.key_down(e.code);
+                }
+            });
+            
+            document.addEventListener('keyup', (e) => {
+                if (nes) {
+                    nes.key_up(e.code);
+                }
+            });
+        }
+        
+        function startEmulation() {
+            if (!running) {
+                running = true;
+                document.getElementById('pause').textContent = 'Pause';
+                
+                // Initialize audio
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                        sampleRate: 44100
+                    });
+                    
+                    // Create script processor for audio output
+                    scriptProcessor = audioContext.createScriptProcessor(4096, 0, 1);
+                    let audioBuffer = [];
+                    
+                    scriptProcessor.onaudioprocess = (e) => {
+                        const output = e.outputBuffer.getChannelData(0);
+                        const needed = output.length;
+                        
+                        // Fill output buffer with samples
+                        for (let i = 0; i < needed; i++) {
+                            if (audioBuffer.length > 0) {
+                                output[i] = audioBuffer.shift();
+                            } else {
+                                output[i] = 0;
+                            }
+                        }
+                    };
+                    
+                    scriptProcessor.connect(audioContext.destination);
+                    
+                    // Store reference for sample pushing
+                    window.pushAudioSamples = (samples) => {
+                        for (let i = 0; i < samples.length; i++) {
+                            audioBuffer.push(samples[i]);
+                        }
+                        
+                        // Prevent buffer overflow
+                        if (audioBuffer.length > 8192) {
+                            audioBuffer = audioBuffer.slice(-8192);
+                        }
+                    };
+                }
+                
+                requestAnimationFrame(runFrame);
+            }
+        }
+        
+        function runFrame(currentTime) {
+            if (!running) return;
+            
+            // Run NES frame
+            const audioSamples = nes.run_frame();
+            
+            // Push audio samples
+            if (window.pushAudioSamples && audioSamples.length > 0) {
+                window.pushAudioSamples(audioSamples);
+            }
+            
+            // Render to canvas
+            nes.render(ctx);
+            
+            // Update FPS counter
+            frameCount++;
+            if (currentTime - fpsUpdateTime >= 1000) {
+                const fps = frameCount / ((currentTime - fpsUpdateTime) / 1000);
+                document.getElementById('fps').textContent = Math.round(fps);
+                frameCount = 0;
+                fpsUpdateTime = currentTime;
+            }
+            
+            requestAnimationFrame(runFrame);
+        }
+        
+        main();
+    </script>
+</body>
+</html>
