@@ -5,6 +5,7 @@ pub mod cartridge;
 pub mod controller;
 pub mod bus;
 pub mod nes;
+pub mod savestate;
 
 pub mod test_rom;
 
@@ -15,6 +16,7 @@ pub use cartridge::Cartridge;
 pub use controller::{Controller, ControllerButton};
 pub use bus::Bus;
 pub use nes::Nes;
+pub use savestate::{SaveState, SaveStateError};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Clock {

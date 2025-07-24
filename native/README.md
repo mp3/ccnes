@@ -68,6 +68,9 @@ Example:
 | Right Shift | Select |
 | R | Reset |
 | F11 | Toggle Fullscreen |
+| F5 | Save State |
+| F9 | Load State |
+| 0-9 | Select Save Slot |
 | Escape | Quit |
 
 ## Performance

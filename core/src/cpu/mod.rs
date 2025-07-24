@@ -247,6 +247,22 @@ impl Cpu {
     pub fn stall(&mut self, cycles: u32) {
         self.stall_cycles += cycles;
     }
+    
+    pub fn is_nmi_pending(&self) -> bool {
+        self.nmi_pending
+    }
+    
+    pub fn is_irq_pending(&self) -> bool {
+        self.irq_pending
+    }
+    
+    pub fn set_nmi_pending(&mut self, pending: bool) {
+        self.nmi_pending = pending;
+    }
+    
+    pub fn set_irq_pending(&mut self, pending: bool) {
+        self.irq_pending = pending;
+    }
 }
 
 pub trait CpuBus {

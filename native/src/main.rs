@@ -1,4 +1,4 @@
-use ccnes_core::{Cartridge, Nes, Controller, ControllerButton};
+use ccnes_core::{Cartridge, Nes, Controller, ControllerButton, SaveStateError};
 use clap::Parser;
 use log::info;
 use sdl2::audio::{AudioCallback, AudioSpecDesired};
@@ -113,6 +113,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut framebuffer = vec![0u8; (NES_WIDTH * NES_HEIGHT * 3) as usize];
     let mut controller = Controller::new();
     
+    // Save state slots (10 slots)
+    let mut save_states: Vec<Option<Vec<u8>>> = vec![None; 10];
+    let mut current_save_slot = 0;
+    
     let mut frame_start = Instant::now();
     
     'running: loop {
@@ -135,6 +139,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             ).ok();
                         }
+                        // Save state
+                        Keycode::F5 => {
+                            match nes.save_state_to_vec() {
+                                Ok(data) => {
+                                    save_states[current_save_slot] = Some(data);
+                                    info!("Saved state to slot {}", current_save_slot);
+                                }
+                                Err(e) => {
+                                    info!("Failed to save state: {}", e);
+                                }
+                            }
+                        }
+                        // Load state
+                        Keycode::F9 => {
+                            if let Some(data) = &save_states[current_save_slot] {
+                                match nes.load_state_from_slice(data) {
+                                    Ok(()) => {
+                                        info!("Loaded state from slot {}", current_save_slot);
+                                    }
+                                    Err(e) => {
+                                        info!("Failed to load state: {}", e);
+                                    }
+                                }
+                            } else {
+                                info!("No save state in slot {}", current_save_slot);
+                            }
+                        }
+                        // Select save slot 0-9
+                        Keycode::Num0 => current_save_slot = 0,
+                        Keycode::Num1 => current_save_slot = 1,
+                        Keycode::Num2 => current_save_slot = 2,
+                        Keycode::Num3 => current_save_slot = 3,
+                        Keycode::Num4 => current_save_slot = 4,
+                        Keycode::Num5 => current_save_slot = 5,
+                        Keycode::Num6 => current_save_slot = 6,
+                        Keycode::Num7 => current_save_slot = 7,
+                        Keycode::Num8 => current_save_slot = 8,
+                        Keycode::Num9 => current_save_slot = 9,
                         _ => {}
                     }
                 }

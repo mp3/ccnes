@@ -84,6 +84,29 @@ impl Bus {
         // APU runs once per CPU cycle
         self.apu.step();
     }
+    
+    // Getters for save state support
+    pub fn get_ram(&self) -> &[u8; 0x800] {
+        &self.ram
+    }
+    
+    pub fn get_controller1_state(&self) -> u8 {
+        self.controller1_state
+    }
+    
+    pub fn get_controller2_state(&self) -> u8 {
+        self.controller2_state
+    }
+    
+    // Setters for save state support
+    pub fn set_ram(&mut self, ram: &[u8]) {
+        self.ram.copy_from_slice(ram);
+    }
+    
+    pub fn set_controller_states(&mut self, controller1: u8, controller2: u8) {
+        self.controller1_state = controller1;
+        self.controller2_state = controller2;
+    }
 }
 
 impl CpuBus for Bus {

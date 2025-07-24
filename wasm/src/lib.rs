@@ -116,6 +116,16 @@ impl WasmNes {
         self.update_controller(key_code, false);
     }
     
+    pub fn save_state(&self) -> Result<Vec<u8>, JsValue> {
+        self.nes.save_state_to_vec()
+            .map_err(|e| JsValue::from_str(&format!("Failed to save state: {}", e)))
+    }
+    
+    pub fn load_state(&mut self, data: &[u8]) -> Result<(), JsValue> {
+        self.nes.load_state_from_slice(data)
+            .map_err(|e| JsValue::from_str(&format!("Failed to load state: {}", e)))
+    }
+    
     fn update_controller(&mut self, key_code: &str, pressed: bool) {
         // Map keyboard to NES controller
         let button = match key_code {

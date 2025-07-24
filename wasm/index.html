@@ -84,6 +84,8 @@
         <button id="load-rom">Load ROM</button>
         <button id="reset">Reset</button>
         <button id="pause">Pause</button>
+        <button id="save-state">Save State (F5)</button>
+        <button id="load-state">Load State (F9)</button>
         <input type="file" id="file-input" accept=".nes">
     </div>
     
@@ -114,6 +116,8 @@
         let lastTime = 0;
         let frameCount = 0;
         let fpsUpdateTime = 0;
+        let saveStates = new Array(10).fill(null);
+        let currentSlot = 0;
         
         async function main() {
             await init();
@@ -156,10 +160,31 @@
                 document.getElementById('pause').textContent = running ? 'Pause' : 'Resume';
             });
             
+            // Set up save/load state buttons
+            document.getElementById('save-state').addEventListener('click', () => {
+                saveState();
+            });
+            
+            document.getElementById('load-state').addEventListener('click', () => {
+                loadState();
+            });
+            
             // Set up keyboard input
             document.addEventListener('keydown', (e) => {
                 if (nes) {
-                    nes.key_down(e.code);
+                    // Handle save states
+                    if (e.key === 'F5') {
+                        e.preventDefault();
+                        saveState();
+                    } else if (e.key === 'F9') {
+                        e.preventDefault();
+                        loadState();
+                    } else if (e.key >= '0' && e.key <= '9') {
+                        currentSlot = parseInt(e.key);
+                        console.log(`Save slot ${currentSlot} selected`);
+                    } else {
+                        nes.key_down(e.code);
+                    }
                 }
             });
             
@@ -168,6 +193,31 @@
                     nes.key_up(e.code);
                 }
             });
+        }
+        
+        function saveState() {
+            if (nes && running) {
+                try {
+                    const state = nes.save_state();
+                    saveStates[currentSlot] = state;
+                    console.log(`State saved to slot ${currentSlot}`);
+                } catch (error) {
+                    console.error('Failed to save state:', error);
+                }
+            }
+        }
+        
+        function loadState() {
+            if (nes && saveStates[currentSlot]) {
+                try {
+                    nes.load_state(saveStates[currentSlot]);
+                    console.log(`State loaded from slot ${currentSlot}`);
+                } catch (error) {
+                    console.error('Failed to load state:', error);
+                }
+            } else {
+                console.log(`No save state in slot ${currentSlot}`);
+            }
         }
         
         function startEmulation() {
