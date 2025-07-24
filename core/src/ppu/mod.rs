@@ -19,8 +19,8 @@ pub struct Ppu {
     
     // Internal memory
     vram: [u8; 0x800],     // 2KB VRAM (name tables)
-    palette: [u8; 32],     // Palette RAM
-    oam: [u8; 256],        // Object Attribute Memory
+    pub palette: [u8; 32],     // Palette RAM
+    pub oam: [u8; 256],        // Object Attribute Memory
     secondary_oam: [u8; 32], // Secondary OAM for sprite evaluation
     
     // Rendering state
@@ -52,10 +52,12 @@ pub struct Ppu {
     
     // Sprite rendering
     sprite_count: u8,
-    sprite_patterns: [u8; 8],
+    sprite_patterns_lo: [u8; 8],
+    sprite_patterns_hi: [u8; 8],
     sprite_positions: [u8; 8],
     sprite_priorities: [u8; 8],
     sprite_indexes: [u8; 8],
+    sprite_attributes: [u8; 8],
     
     // Frame buffer
     pub framebuffer: Vec<u32>,
@@ -100,10 +102,12 @@ impl Ppu {
             bg_next_tile_lsb: 0,
             bg_next_tile_msb: 0,
             sprite_count: 0,
-            sprite_patterns: [0; 8],
+            sprite_patterns_lo: [0; 8],
+            sprite_patterns_hi: [0; 8],
             sprite_positions: [0; 8],
             sprite_priorities: [0; 8],
             sprite_indexes: [0; 8],
+            sprite_attributes: [0; 8],
             framebuffer: vec![0; SCREEN_WIDTH * SCREEN_HEIGHT],
             nmi_output: false,
             nmi_occurred: false,
@@ -113,6 +117,10 @@ impl Ppu {
     
     pub fn read_register(&mut self, reg: u8) -> u8 {
         match reg {
+            1 => {
+                // PPUMASK (write-only, but return the value for debugging)
+                self.mask
+            }
             2 => {
                 // PPUSTATUS
                 let value = (self.status & 0xE0) | (self.buffer & 0x1F);
@@ -154,7 +162,11 @@ impl Ppu {
     
     pub fn write_register(&mut self, reg: u8, value: u8) {
         match reg {
-            0 => self.ctrl = value,      // PPUCTRL
+            0 => {
+                self.ctrl = value;      // PPUCTRL
+                // Update NMI output based on bit 7
+                self.nmi_output = (value & 0x80) != 0;
+            }
             1 => self.mask = value,      // PPUMASK
             3 => self.oam_addr = value,  // OAMADDR
             4 => {
@@ -325,10 +337,20 @@ impl Ppu {
                 if self.mask & 0x08 != 0 {
                     self.v = (self.v & 0xFBE0) | (self.t & 0x041F);
                 }
+                
+                // Sprite evaluation for next scanline
+                if self.scanline >= -1 && self.scanline < 239 {
+                    self.evaluate_sprites(self.scanline + 1);
+                }
             }
             
             if self.cycle == 338 || self.cycle == 340 {
                 self.fetch_nametable_byte(cartridge);
+            }
+            
+            // Fetch sprite data
+            if self.cycle >= 257 && self.cycle <= 320 {
+                self.fetch_sprite_data(cartridge);
             }
             
             if self.scanline == 239 && self.cycle == 340 {
@@ -411,12 +433,70 @@ impl Ppu {
                 bg_palette = (bg_pal1 << 1) | bg_pal0;
             }
             
-            // For now, just render background
-            // TODO: Add sprite rendering and priority
-            let palette_addr = if bg_pixel == 0 {
+            // Check sprite rendering
+            let mut sprite_pixel = 0;
+            let mut sprite_palette = 0;
+            let mut sprite_priority = false;
+            let mut sprite_zero_hit = false;
+            
+            if self.mask & 0x10 != 0 {
+                // Sprites enabled
+                for i in 0..self.sprite_count {
+                    let x_diff = (x as i32) - (self.sprite_positions[i as usize] as i32);
+                    if x_diff >= 0 && x_diff < 8 {
+                        let sprite_lo = self.sprite_patterns_lo[i as usize];
+                        let sprite_hi = self.sprite_patterns_hi[i as usize];
+                        let attr = self.sprite_attributes[i as usize];
+                        
+                        let mut bit = 7 - x_diff;
+                        if attr & 0x40 != 0 {
+                            // Horizontal flip
+                            bit = x_diff;
+                        }
+                        
+                        let lo = ((sprite_lo >> bit) & 1) as u8;
+                        let hi = ((sprite_hi >> bit) & 1) as u8;
+                        let pixel = (hi << 1) | lo;
+                        
+                        if pixel != 0 {
+                            if i == 0 && self.sprite_indexes[0] == 0 && bg_pixel != 0 {
+                                // Sprite 0 hit
+                                sprite_zero_hit = true;
+                            }
+                            
+                            if sprite_pixel == 0 {
+                                sprite_pixel = pixel;
+                                sprite_palette = (attr & 0x03) + 4;
+                                sprite_priority = attr & 0x20 == 0;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Determine final pixel
+            let (final_pixel, final_palette) = if bg_pixel == 0 && sprite_pixel == 0 {
+                (0, 0)
+            } else if bg_pixel == 0 && sprite_pixel != 0 {
+                (sprite_pixel, sprite_palette)
+            } else if bg_pixel != 0 && sprite_pixel == 0 {
+                (bg_pixel, bg_palette)
+            } else {
+                // Both background and sprite are visible
+                if sprite_priority {
+                    (sprite_pixel, sprite_palette)
+                } else {
+                    (bg_pixel, bg_palette)
+                }
+            };
+            
+            if sprite_zero_hit && x < 255 {
+                self.status |= 0x40; // Set sprite 0 hit flag
+            }
+            let palette_addr = if final_pixel == 0 {
                 0  // Universal background color
             } else {
-                (bg_palette << 2) | bg_pixel
+                (final_palette << 2) | final_pixel
             };
             
             let palette_index = self.palette[palette_addr as usize] & 0x3F;
@@ -504,5 +584,127 @@ impl Ppu {
     
     pub fn get_ctrl(&self) -> u8 {
         self.ctrl
+    }
+    
+    pub fn write_oam_byte(&mut self, addr: u8, value: u8) {
+        self.oam[addr as usize] = value;
+    }
+    
+    fn evaluate_sprites(&mut self, scanline: i32) {
+        self.sprite_count = 0;
+        
+        let sprite_height = if self.ctrl & 0x20 != 0 { 16 } else { 8 };
+        
+        // Clear secondary OAM
+        for i in 0..8 {
+            self.sprite_patterns_lo[i] = 0;
+            self.sprite_patterns_hi[i] = 0;
+            self.sprite_positions[i] = 0xFF;
+            self.sprite_priorities[i] = 0;
+            self.sprite_indexes[i] = 0xFF;
+            self.sprite_attributes[i] = 0;
+        }
+        
+        // Evaluate all 64 sprites
+        for i in 0..64 {
+            let y = self.oam[i * 4] as i32;
+            let tile = self.oam[i * 4 + 1];
+            let attr = self.oam[i * 4 + 2];
+            let x = self.oam[i * 4 + 3];
+            
+            let y_diff = scanline - y;
+            if y_diff >= 0 && y_diff < sprite_height {
+                if self.sprite_count < 8 {
+                    let idx = self.sprite_count as usize;
+                    self.sprite_positions[idx] = x;
+                    self.sprite_attributes[idx] = attr;
+                    self.sprite_indexes[idx] = i as u8;
+                    
+                    // Store tile index for later pattern fetch
+                    self.secondary_oam[idx * 4] = y as u8;
+                    self.secondary_oam[idx * 4 + 1] = tile;
+                    self.secondary_oam[idx * 4 + 2] = attr;
+                    self.secondary_oam[idx * 4 + 3] = x;
+                    
+                    self.sprite_count += 1;
+                } else {
+                    // Sprite overflow
+                    self.status |= 0x20;
+                    break;
+                }
+            }
+        }
+    }
+    
+    fn fetch_sprite_data(&mut self, cartridge: &Cartridge) {
+        if self.cycle >= 257 && self.cycle < 321 {
+            let sprite_idx = ((self.cycle - 257) / 8) as usize;
+            
+            if sprite_idx < self.sprite_count as usize {
+                let cycle_in_fetch = (self.cycle - 257) % 8;
+                
+                if cycle_in_fetch == 4 {
+                    // Fetch low sprite byte
+                    let y = self.secondary_oam[sprite_idx * 4] as i32;
+                    let tile = self.secondary_oam[sprite_idx * 4 + 1];
+                    let attr = self.secondary_oam[sprite_idx * 4 + 2];
+                    
+                    let sprite_height = if self.ctrl & 0x20 != 0 { 16 } else { 8 };
+                    let y_in_tile = (self.scanline - y) as u16;
+                    
+                    let mut y_offset = y_in_tile;
+                    if attr & 0x80 != 0 {
+                        // Vertical flip
+                        y_offset = (sprite_height - 1) as u16 - y_offset;
+                    }
+                    
+                    let pattern_addr = if sprite_height == 8 {
+                        let table = if self.ctrl & 0x08 != 0 { 0x1000 } else { 0x0000 };
+                        table | ((tile as u16) << 4) | y_offset
+                    } else {
+                        // 8x16 sprites
+                        let table = ((tile & 1) as u16) << 12;
+                        let tile_num = (tile & 0xFE) as u16;
+                        if y_offset >= 8 {
+                            table | ((tile_num + 1) << 4) | (y_offset - 8)
+                        } else {
+                            table | (tile_num << 4) | y_offset
+                        }
+                    };
+                    
+                    self.sprite_patterns_lo[sprite_idx] = self.read_byte(pattern_addr, cartridge);
+                } else if cycle_in_fetch == 6 {
+                    // Fetch high sprite byte
+                    let y = self.secondary_oam[sprite_idx * 4] as i32;
+                    let tile = self.secondary_oam[sprite_idx * 4 + 1];
+                    let attr = self.secondary_oam[sprite_idx * 4 + 2];
+                    
+                    let sprite_height = if self.ctrl & 0x20 != 0 { 16 } else { 8 };
+                    let y_in_tile = (self.scanline - y) as u16;
+                    
+                    let mut y_offset = y_in_tile;
+                    if attr & 0x80 != 0 {
+                        // Vertical flip
+                        y_offset = (sprite_height - 1) as u16 - y_offset;
+                    }
+                    
+                    let pattern_addr = if sprite_height == 8 {
+                        let table = if self.ctrl & 0x08 != 0 { 0x1000 } else { 0x0000 };
+                        table | ((tile as u16) << 4) | y_offset | 8
+                    } else {
+                        // 8x16 sprites  
+                        let table = ((tile & 1) as u16) << 12;
+                        let tile_num = (tile & 0xFE) as u16;
+                        if y_offset >= 8 {
+                            table | ((tile_num + 1) << 4) | (y_offset - 8) | 8
+                        } else {
+                            table | (tile_num << 4) | y_offset | 8
+                        }
+                    };
+                    
+                    self.sprite_patterns_hi[sprite_idx] = self.read_byte(pattern_addr, cartridge);
+                }
+            }
+        }
     }
 }

@@ -30,7 +30,7 @@ pub struct Cpu {
     pub status: StatusFlags,
     
     pub cycles: u32,
-    stall_cycles: u32,
+    pub stall_cycles: u32,
     
     // Interrupt flags
     nmi_pending: bool,
@@ -242,6 +242,10 @@ impl Cpu {
             self.pc = self.read_word(0xFFFE, bus);
             self.cycles += 7;
         }
+    }
+    
+    pub fn stall(&mut self, cycles: u32) {
+        self.stall_cycles += cycles;
     }
 }
 

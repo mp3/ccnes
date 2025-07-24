@@ -13,6 +13,8 @@ pub struct Bus {
     controller1_state: u8,
     controller2_state: u8,
     controller_strobe: bool,
+    oam_dma_page: Option<u8>,
+    oam_dma_cycle: u16,
 }
 
 impl Bus {
@@ -27,6 +29,8 @@ impl Bus {
             controller1_state: 0,
             controller2_state: 0,
             controller_strobe: false,
+            oam_dma_page: None,
+            oam_dma_cycle: 0,
         }
     }
     
@@ -43,6 +47,26 @@ impl Bus {
     }
     
     pub fn tick(&mut self, cpu: &mut Cpu) {
+        // Handle OAM DMA if active
+        if let Some(page) = self.oam_dma_page {
+            // DMA takes 513 or 514 cycles
+            if self.oam_dma_cycle < 512 {
+                if self.oam_dma_cycle % 2 == 0 {
+                    // Read cycle
+                    let addr = ((page as u16) << 8) | ((self.oam_dma_cycle / 2) as u16);
+                    let data = self.read(addr);
+                    self.ppu.write_oam_byte((self.oam_dma_cycle / 2) as u8, data);
+                }
+                self.oam_dma_cycle += 1;
+            } else {
+                // DMA complete
+                self.oam_dma_page = None;
+                self.oam_dma_cycle = 0;
+            }
+            // CPU is stalled during DMA
+            cpu.stall(1);
+        }
+        
         // PPU runs 3 times per CPU cycle
         let mut nmi = false;
         for _ in 0..3 {
@@ -122,8 +146,17 @@ impl CpuBus for Bus {
                 // PPU registers and mirrors
                 self.ppu.write_register((addr & 0x7) as u8, value);
             }
-            0x4000..=0x4015 => {
+            0x4000..=0x4013 => {
                 // APU registers
+                self.apu.write_register(addr, value);
+            }
+            0x4014 => {
+                // OAM DMA
+                self.oam_dma_page = Some(value);
+                self.oam_dma_cycle = 0;
+            }
+            0x4015 => {
+                // APU control
                 self.apu.write_register(addr, value);
             }
             0x4016 => {
