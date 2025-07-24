@@ -1,4 +1,4 @@
-use crate::{Cpu, Ppu, Apu, Bus, Cartridge, Clock};
+use crate::{Cpu, Ppu, Apu, Bus, Cartridge, Clock, Controller};
 
 pub struct Nes {
     pub cpu: Cpu,
@@ -68,5 +68,13 @@ impl Nes {
     
     pub fn set_controller2(&mut self, state: u8) {
         self.bus.set_controller2(state);
+    }
+    
+    pub fn set_controller1_from_controller(&mut self, controller: &Controller) {
+        self.bus.set_controller1(controller.get_state());
+    }
+    
+    pub fn set_controller2_from_controller(&mut self, controller: &Controller) {
+        self.bus.set_controller2(controller.get_state());
     }
 }

@@ -227,3 +227,60 @@ pub fn create_sprite_test_rom() -> Vec<u8> {
     
     rom
 }
+
+pub fn create_controller_test_rom() -> Vec<u8> {
+    let mut rom = Vec::new();
+    
+    // iNES header
+    rom.extend_from_slice(b"NES\x1A");  // Magic
+    rom.push(1);  // 1x 16KB PRG ROM
+    rom.push(1);  // 1x 8KB CHR ROM
+    rom.push(0);  // Mapper 0, horizontal mirroring
+    rom.push(0);  // Mapper 0 high nibble
+    rom.extend_from_slice(&[0; 8]);  // Padding
+    
+    // PRG ROM (16KB)
+    let mut prg = vec![0; 16384];
+    
+    // Program that reads controller and stores in RAM
+    let program = [
+        // Initialize
+        0xA9, 0x00,        // LDA #$00
+        0x85, 0x00,        // STA $00 (clear result)
+        
+        // Strobe controller
+        0xA9, 0x01,        // LDA #$01
+        0x8D, 0x16, 0x40,  // STA $4016
+        0xA9, 0x00,        // LDA #$00
+        0x8D, 0x16, 0x40,  // STA $4016
+        
+        // Read 8 bits from controller
+        0xA2, 0x08,        // LDX #$08
+        // Read loop (at $C00F)
+        0xAD, 0x16, 0x40,  // LDA $4016
+        0x4A,              // LSR A
+        0x66, 0x00,        // ROR $00
+        0xCA,              // DEX
+        0xD0, 0xF6,        // BNE -10 (back to $C00F)
+        
+        // Infinite loop
+        0x4C, 0x18, 0xC0,  // JMP $C018
+    ];
+    
+    // Place program at start of ROM
+    for (i, &byte) in program.iter().enumerate() {
+        prg[i] = byte;
+    }
+    
+    // Set reset vector
+    prg[0x3FFC] = 0x00;  // Low byte
+    prg[0x3FFD] = 0xC0;  // High byte ($C000)
+    
+    rom.extend_from_slice(&prg);
+    
+    // CHR ROM (8KB) - empty
+    let chr = vec![0; 8192];
+    rom.extend_from_slice(&chr);
+    
+    rom
+}
