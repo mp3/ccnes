@@ -26,7 +26,8 @@ pub enum Mirroring {
     Horizontal,
     Vertical,
     FourScreen,
-    SingleScreen,
+    SingleScreenLow,
+    SingleScreenHigh,
 }
 
 pub trait Mapper: std::fmt::Debug {
@@ -79,6 +80,8 @@ impl Cartridge {
             1 => Box::new(mappers::Mapper1::new()),
             2 => Box::new(mappers::Mapper2::new(prg_size)),
             3 => Box::new(mappers::Mapper3::new()),
+            4 => Box::new(mappers::Mapper4::new(prg_size, chr_size)),
+            7 => Box::new(mappers::Mapper7::new(prg_size)),
             _ => return Err(CartridgeError::UnsupportedMapper(mapper_num)),
         };
         
