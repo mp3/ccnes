@@ -1,10 +1,12 @@
-use ccnes_core::{Cartridge, Nes};
+use ccnes_core::{Cartridge, Nes, Controller, ControllerButton};
 use clap::Parser;
 use log::info;
+use sdl2::audio::{AudioCallback, AudioSpecDesired};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
 use std::fs::File;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 #[derive(Parser, Debug)]
@@ -16,12 +18,41 @@ struct Args {
     /// Scale factor for display
     #[arg(short, long, default_value_t = 3)]
     scale: u32,
+    
+    /// Start in fullscreen mode
+    #[arg(short, long)]
+    fullscreen: bool,
 }
 
 const NES_WIDTH: u32 = 256;
 const NES_HEIGHT: u32 = 240;
 const TARGET_FPS: u32 = 60;
 const FRAME_DURATION: Duration = Duration::from_nanos(1_000_000_000 / TARGET_FPS as u64);
+
+struct AudioOutput {
+    samples: Arc<Mutex<Vec<f32>>>,
+}
+
+impl AudioCallback for AudioOutput {
+    type Channel = f32;
+    
+    fn callback(&mut self, out: &mut [f32]) {
+        let mut samples = self.samples.lock().unwrap();
+        let available = samples.len().min(out.len());
+        
+        for i in 0..available {
+            out[i] = samples[i];
+        }
+        
+        // Fill rest with silence if needed
+        for i in available..out.len() {
+            out[i] = 0.0;
+        }
+        
+        // Remove consumed samples
+        samples.drain(0..available);
+    }
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
@@ -36,11 +67,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
+    let audio_subsystem = sdl_context.audio()?;
     
-    let window = video_subsystem
+    let mut window_builder = video_subsystem
         .window("CCNES", NES_WIDTH * args.scale, NES_HEIGHT * args.scale)
-        .position_centered()
-        .build()?;
+        .position_centered();
+    
+    if args.fullscreen {
+        window_builder.fullscreen_desktop();
+    }
+    
+    let window = window_builder.build()?;
     
     let mut canvas = window.into_canvas().accelerated().build()?;
     let texture_creator = canvas.texture_creator();
@@ -51,14 +88,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         NES_HEIGHT,
     )?;
     
+    // Set up audio
+    let audio_samples = Arc::new(Mutex::new(Vec::new()));
+    let audio_spec_desired = AudioSpecDesired {
+        freq: Some(44100),
+        channels: Some(1),
+        samples: Some(2048),
+    };
+    
+    let audio_device = audio_subsystem.open_playback(
+        None,
+        &audio_spec_desired,
+        |spec| {
+            info!("Audio initialized: {} Hz, {} channels", spec.freq, spec.channels);
+            AudioOutput {
+                samples: audio_samples.clone(),
+            }
+        },
+    )?;
+    
+    audio_device.resume();
+    
     let mut event_pump = sdl_context.event_pump()?;
     let mut framebuffer = vec![0u8; (NES_WIDTH * NES_HEIGHT * 3) as usize];
+    let mut controller = Controller::new();
     
     let mut frame_start = Instant::now();
     
     'running: loop {
-        let mut controller_state = 0u8;
-        
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. } => break 'running,
@@ -66,6 +123,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     match keycode {
                         Keycode::Escape => break 'running,
                         Keycode::R => nes.reset(),
+                        Keycode::F11 => {
+                            use sdl2::video::FullscreenType;
+                            let window = canvas.window_mut();
+                            let fullscreen_type = window.fullscreen_state();
+                            window.set_fullscreen(
+                                if fullscreen_type == FullscreenType::Off {
+                                    FullscreenType::Desktop
+                                } else {
+                                    FullscreenType::Off
+                                }
+                            ).ok();
+                        }
                         _ => {}
                     }
                 }
@@ -75,35 +144,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         
         // Update controller state based on keyboard
         let keyboard_state = event_pump.keyboard_state();
-        if keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Z) {
-            controller_state |= 0x80; // A button
-        }
-        if keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::X) {
-            controller_state |= 0x40; // B button
-        }
-        if keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::RShift) {
-            controller_state |= 0x20; // Select
-        }
-        if keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Return) {
-            controller_state |= 0x10; // Start
-        }
-        if keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Up) {
-            controller_state |= 0x08; // Up
-        }
-        if keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Down) {
-            controller_state |= 0x04; // Down
-        }
-        if keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Left) {
-            controller_state |= 0x02; // Left
-        }
-        if keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Right) {
-            controller_state |= 0x01; // Right
-        }
+        controller.set_button(ControllerButton::A, 
+            keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Z) ||
+            keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::A));
+        controller.set_button(ControllerButton::B,
+            keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::X) ||
+            keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::S));
+        controller.set_button(ControllerButton::SELECT,
+            keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::RShift));
+        controller.set_button(ControllerButton::START,
+            keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Return));
+        controller.set_button(ControllerButton::UP,
+            keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Up));
+        controller.set_button(ControllerButton::DOWN,
+            keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Down));
+        controller.set_button(ControllerButton::LEFT,
+            keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Left));
+        controller.set_button(ControllerButton::RIGHT,
+            keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::Right));
         
-        nes.set_controller1(controller_state);
+        nes.set_controller1_from_controller(&controller);
         
         // Run one frame
         nes.run_frame();
+        
+        // Get audio samples and push to audio buffer
+        let samples = nes.bus.apu.get_samples();
+        if !samples.is_empty() {
+            let mut audio_buffer = audio_samples.lock().unwrap();
+            audio_buffer.extend_from_slice(&samples);
+            
+            // Prevent buffer overflow - keep only last ~0.5 seconds
+            if audio_buffer.len() > 22050 {
+                let start = audio_buffer.len() - 22050;
+                audio_buffer.drain(0..start);
+            }
+        }
         
         // Get framebuffer from PPU and convert to RGB24
         let nes_framebuffer = nes.get_framebuffer();

@@ -1,25 +1,37 @@
-#!/bin/bash
+#\!/bin/bash
 
-set -e
+echo "Building CCNES NES Emulator..."
 
-echo "Building CCNES..."
-
-# Build native version
-echo "Building native version..."
+# Build core library
+echo "Building core library..."
+cd core
 cargo build --release
-
-# Build WASM version
-echo "Building WASM version..."
-cd wasm
-wasm-pack build --target web --out-dir pkg
 cd ..
 
-echo "Build complete!"
+# Build WebAssembly module
+echo "Building WebAssembly module..."
+cd wasm
+./build.sh
+cd ..
+
+# Build native frontend (if SDL2 is available)
+if command -v sdl2-config &> /dev/null; then
+    echo "Building native SDL2 frontend..."
+    cd native
+    cargo build --release
+    cd ..
+    echo "Native build complete: ./target/release/ccnes"
+else
+    echo "SDL2 not found, skipping native build"
+    echo "To build native version, install SDL2:"
+    echo "  macOS: brew install sdl2"
+    echo "  Ubuntu: sudo apt-get install libsdl2-dev"
+fi
+
 echo ""
-echo "To run the native version:"
-echo "  ./target/release/ccnes <rom_file>"
+echo "Build complete\!"
 echo ""
-echo "To run the WASM version:"
-echo "  1. cd wasm/www"
-echo "  2. python3 -m http.server 8000"
-echo "  3. Open http://localhost:8000 in your browser"
+echo "To run:"
+echo "  Native: ./target/release/ccnes <rom.nes>"
+echo "  Web: cd wasm && ./serve.py"
+EOF < /dev/null
