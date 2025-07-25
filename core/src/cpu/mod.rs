@@ -3,6 +3,7 @@ use bitflags::bitflags;
 pub mod instructions;
 pub mod addressing;
 pub mod opcodes;
+pub mod optimized;
 
 use opcodes::{OPCODE_TABLE, Instruction};
 
@@ -88,7 +89,51 @@ impl Cpu {
         self.cycles - start_cycles
     }
     
+    #[inline(always)]
     fn execute_instruction(&mut self, opcode_byte: u8, bus: &mut impl CpuBus) {
+        // Use optimized helpers for common operations
+        match opcode_byte {
+            // Most common instructions get optimized paths
+            0xA9 => { // LDA immediate
+                self.a = optimized::read_byte_fast(bus, self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                optimized::flags::set_nz(self, self.a);
+                self.cycles += 2;
+                return;
+            },
+            0xA5 => { // LDA zero page
+                let addr = optimized::read_byte_fast(bus, self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                self.a = optimized::read_zero_page(bus, addr);
+                optimized::flags::set_nz(self, self.a);
+                self.cycles += 3;
+                return;
+            },
+            0xAD => { // LDA absolute
+                let addr = optimized::read_word(bus, self.pc);
+                self.pc = self.pc.wrapping_add(2);
+                self.a = optimized::read_byte_fast(bus, addr);
+                optimized::flags::set_nz(self, self.a);
+                self.cycles += 4;
+                return;
+            },
+            0x85 => { // STA zero page
+                let addr = optimized::read_byte_fast(bus, self.pc);
+                self.pc = self.pc.wrapping_add(1);
+                optimized::write_zero_page(bus, addr, self.a);
+                self.cycles += 3;
+                return;
+            },
+            0x8D => { // STA absolute
+                let addr = optimized::read_word(bus, self.pc);
+                self.pc = self.pc.wrapping_add(2);
+                optimized::write_byte_fast(bus, addr, self.a);
+                self.cycles += 4;
+                return;
+            },
+            _ => {}
+        }
+        
         let opcode = match OPCODE_TABLE[opcode_byte as usize] {
             Some(op) => op,
             None => panic!("Invalid opcode: 0x{:02X}", opcode_byte),

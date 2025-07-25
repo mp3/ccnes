@@ -262,8 +262,8 @@ impl Mapper for Mapper4 {
     fn set_state(&mut self, state: &MapperState) {
         if let MapperState::Mapper4 {
             bank_select,
-            prg_mode,
-            chr_mode,
+            prg_mode: _,
+            chr_mode: _,
             bank_registers,
             irq_counter,
             irq_reload,

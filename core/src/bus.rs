@@ -110,6 +110,7 @@ impl Bus {
 }
 
 impl CpuBus for Bus {
+    #[inline]
     fn read(&mut self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x1FFF => {
@@ -159,6 +160,7 @@ impl CpuBus for Bus {
         }
     }
     
+    #[inline]
     fn write(&mut self, addr: u16, value: u8) {
         match addr {
             0x0000..=0x1FFF => {

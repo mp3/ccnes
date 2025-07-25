@@ -15,3 +15,8 @@ bincode = { workspace = true }
 [dev-dependencies]
 serde_json = { workspace = true }
 tempfile = "3.0"
+criterion = "0.5"
+
+[[bench]]
+name = "performance_bench"
+harness = false

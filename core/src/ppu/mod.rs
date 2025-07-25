@@ -2,6 +2,7 @@ use crate::cartridge::Cartridge;
 
 mod palette;
 use palette::NES_PALETTE;
+pub mod optimized;
 
 pub const SCREEN_WIDTH: usize = 256;
 pub const SCREEN_HEIGHT: usize = 240;
@@ -74,6 +75,9 @@ pub struct Ppu {
     
     // Odd frame flag
     odd_frame: bool,
+    
+    // Optimized rendering tables
+    rendering_tables: optimized::RenderingTables,
 }
 
 impl Ppu {
@@ -120,6 +124,7 @@ impl Ppu {
             nmi_output: false,
             nmi_occurred: false,
             odd_frame: false,
+            rendering_tables: optimized::RenderingTables::new(),
         }
     }
     
@@ -371,7 +376,12 @@ impl Ppu {
                 
                 // Sprite evaluation for next scanline
                 if self.scanline >= -1 && self.scanline < 239 {
-                    self.evaluate_sprites(self.scanline + 1);
+                    // Use optimized sprite evaluation if rendering is enabled
+                    if self.is_rendering() {
+                        optimized::evaluate_sprites_fast(self, self.scanline + 1);
+                    } else {
+                        self.evaluate_sprites(self.scanline + 1);
+                    }
                 }
             }
             
