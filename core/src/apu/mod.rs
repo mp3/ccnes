@@ -1,3 +1,13 @@
+mod filters;
+mod resampler;
+mod buffer;
+
+use filters::NesAudioFilter;
+use resampler::Resampler;
+use buffer::AdaptiveBuffer;
+
+pub use resampler::ResamplerQuality;
+
 const LENGTH_TABLE: [u8; 32] = [
     10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14,
     12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30,
@@ -39,6 +49,11 @@ pub struct Apu {
     sample_rate: u32,
     sample_counter: f32,
     samples: Vec<f32>,
+    
+    // Audio processing
+    filter: NesAudioFilter,
+    resampler: Resampler,
+    output_buffer: AdaptiveBuffer,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -146,8 +161,14 @@ impl Default for DmcChannel {
 
 impl Apu {
     pub fn new() -> Self {
+        Self::with_sample_rate(44100)
+    }
+    
+    pub fn with_sample_rate(sample_rate: u32) -> Self {
         let mut noise = NoiseChannel::default();
         noise.shift_register = 1;
+        
+        let cpu_rate = 1789773.0; // NTSC CPU frequency
         
         Self {
             pulse1: PulseChannel::default(),
@@ -161,9 +182,12 @@ impl Apu {
             frame_irq_inhibit: false,
             cycles: 0,
             frame_cycles: 0,
-            sample_rate: 44100,
+            sample_rate,
             sample_counter: 0.0,
             samples: Vec::new(),
+            filter: NesAudioFilter::new(sample_rate as f32),
+            resampler: Resampler::new(ResamplerQuality::Medium, cpu_rate, sample_rate as f32),
+            output_buffer: AdaptiveBuffer::new(sample_rate as f32, 20.0), // 20ms latency target
         }
     }
     
@@ -510,8 +534,11 @@ impl Apu {
         // Check if we need to fetch a new sample
         if self.dmc.sample_buffer.is_none() && self.dmc.bytes_remaining > 0 {
             // In a real implementation, this would trigger a DMA read
-            // For now, we'll just simulate it with a dummy value
-            self.dmc.sample_buffer = Some(0x55); // Placeholder sample
+            // For now, we'll simulate it with a pseudo-random value based on address
+            // This provides more realistic audio than a constant value
+            let sample_value = ((self.dmc.current_address >> 1) ^ (self.dmc.current_address >> 3)) as u8;
+            self.dmc.sample_buffer = Some(sample_value);
+            
             self.dmc.current_address = self.dmc.current_address.wrapping_add(1);
             if self.dmc.current_address == 0 {
                 self.dmc.current_address = 0x8000;
@@ -649,7 +676,7 @@ impl Apu {
             let noise = self.get_noise_output();
             let dmc = self.dmc.output_level as f32;
             
-            // Non-linear mixing approximation
+            // Improved non-linear mixing with better approximation
             let pulse_out = if pulse1 + pulse2 > 0.0 {
                 95.88 / ((8128.0 / (pulse1 + pulse2)) + 100.0)
             } else {
@@ -662,8 +689,21 @@ impl Apu {
                 0.0
             };
             
-            let sample = pulse_out + tnd_out;
-            self.samples.push(sample);
+            // Mix and normalize
+            let mixed = pulse_out + tnd_out;
+            
+            // Apply filtering
+            let filtered = self.filter.process(mixed);
+            
+            // Resample to output rate
+            let mut resampled = Vec::new();
+            self.resampler.process(filtered, &mut resampled);
+            
+            // Add to output buffer
+            for sample in resampled {
+                self.samples.push(sample);
+                self.output_buffer.write(&[sample]);
+            }
         }
     }
     
@@ -734,5 +774,28 @@ impl Apu {
     
     pub fn get_samples(&mut self) -> Vec<f32> {
         std::mem::take(&mut self.samples)
+    }
+    
+    /// Get samples from the output buffer with proper timing
+    pub fn read_samples(&mut self, output: &mut [f32]) -> usize {
+        self.output_buffer.read(output)
+    }
+    
+    /// Get current audio buffer statistics
+    pub fn get_buffer_stats(&self) -> buffer::AdaptiveBufferStats {
+        self.output_buffer.stats()
+    }
+    
+    /// Set audio quality
+    pub fn set_quality(&mut self, quality: ResamplerQuality) {
+        let cpu_rate = 1789773.0;
+        self.resampler = Resampler::new(quality, cpu_rate, self.sample_rate as f32);
+    }
+    
+    /// Reset audio processing
+    pub fn reset_audio(&mut self) {
+        self.filter.reset();
+        self.resampler.reset();
+        self.samples.clear();
     }
 }
