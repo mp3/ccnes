@@ -1,4 +1,4 @@
-use crate::cartridge::Mapper;
+use crate::cartridge::{Mapper, MapperState};
 
 // Mapper 66: GxROM
 // Used by games like Dragon Power, Doraemon, Dragon Ball series
@@ -76,5 +76,13 @@ impl Mapper for Mapper66 {
     
     fn write_chr(&mut self, _addr: u16, _value: u8) {
         // CHR ROM is not writable in mapper 66
+    }
+    
+    fn get_state(&self) -> MapperState {
+        MapperState::Other
+    }
+    
+    fn set_state(&mut self, _state: &MapperState) {
+        // Mapper 66 state restoration not implemented yet
     }
 }

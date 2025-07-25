@@ -1,4 +1,4 @@
-use crate::cartridge::Mapper;
+use crate::cartridge::{Mapper, MapperState};
 
 // Mapper 4: MMC3 (Memory Management Controller 3)
 // Used by many popular games like Super Mario Bros. 3, Mega Man 3-6, etc.
@@ -244,6 +244,37 @@ impl Mapper for Mapper4 {
         if self.chr_rom_size == 0 && addr < 0x2000 {
             // CHR RAM
             self.chr_ram[addr as usize] = value;
+        }
+    }
+    
+    fn get_state(&self) -> MapperState {
+        MapperState::Mapper4 {
+            bank_select: self.bank_select,
+            prg_mode: (self.bank_select & 0x40) != 0,
+            chr_mode: (self.bank_select & 0x80) != 0,
+            bank_registers: self.bank_data.to_vec(),
+            irq_counter: self.irq_counter,
+            irq_reload: self.irq_latch,
+            irq_enable: self.irq_enabled,
+        }
+    }
+    
+    fn set_state(&mut self, state: &MapperState) {
+        if let MapperState::Mapper4 {
+            bank_select,
+            prg_mode,
+            chr_mode,
+            bank_registers,
+            irq_counter,
+            irq_reload,
+            irq_enable,
+        } = state {
+            self.bank_select = *bank_select;
+            self.bank_data.copy_from_slice(&bank_registers[0..8]);
+            self.irq_counter = *irq_counter;
+            self.irq_latch = *irq_reload;
+            self.irq_enabled = *irq_enable;
+            self.update_banks();
         }
     }
 }

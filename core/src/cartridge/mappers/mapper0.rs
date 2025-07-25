@@ -1,4 +1,4 @@
-use crate::cartridge::Mapper;
+use crate::cartridge::{Mapper, MapperState};
 
 #[derive(Debug)]
 pub struct Mapper0;
@@ -41,5 +41,13 @@ impl Mapper for Mapper0 {
     fn write_chr(&mut self, _addr: u16, _value: u8) {
         // Mapper 0 doesn't support CHR writes for ROM
         // CHR RAM would be handled differently
+    }
+    
+    fn get_state(&self) -> MapperState {
+        MapperState::Mapper0
+    }
+    
+    fn set_state(&mut self, _state: &MapperState) {
+        // Mapper 0 has no state to restore
     }
 }

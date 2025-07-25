@@ -1,5 +1,6 @@
 use std::io::Read;
 use thiserror::Error;
+use serde::{Serialize, Deserialize};
 
 pub mod mappers;
 
@@ -21,7 +22,7 @@ pub struct Cartridge {
     mirroring: Mirroring,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum Mirroring {
     Horizontal,
     Vertical,
@@ -30,11 +31,47 @@ pub enum Mirroring {
     SingleScreenHigh,
 }
 
+#[derive(Serialize, Deserialize)]
+pub enum MapperState {
+    Mapper0,
+    Mapper1 {
+        shift_register: u8,
+        shift_count: u8,
+        prg_bank_mode: u8,
+        chr_bank_mode: u8,
+        prg_bank: u8,
+        chr_bank0: u8,
+        chr_bank1: u8,
+    },
+    Mapper2 {
+        prg_bank: u8,
+    },
+    Mapper3 {
+        chr_bank: u8,
+    },
+    Mapper4 {
+        bank_select: u8,
+        prg_mode: bool,
+        chr_mode: bool,
+        bank_registers: Vec<u8>,
+        irq_counter: u8,
+        irq_reload: u8,
+        irq_enable: bool,
+    },
+    Mapper7 {
+        prg_bank: usize,
+        mirroring_mode: u8,
+    },
+    Other,
+}
+
 pub trait Mapper: std::fmt::Debug {
     fn read_prg(&self, addr: u16, prg_rom: &[u8]) -> u8;
     fn write_prg(&mut self, addr: u16, value: u8);
     fn read_chr(&self, addr: u16, chr_rom: &[u8]) -> u8;
     fn write_chr(&mut self, addr: u16, value: u8);
+    fn get_state(&self) -> MapperState;
+    fn set_state(&mut self, state: &MapperState);
 }
 
 impl Cartridge {
@@ -115,5 +152,27 @@ impl Cartridge {
     
     pub fn mirroring(&self) -> Mirroring {
         self.mirroring
+    }
+    
+    pub fn get_mapper_number(&self) -> u8 {
+        // This should be stored when creating the cartridge
+        // For now, we'll determine from the mapper type
+        match self.mapper.get_state() {
+            MapperState::Mapper0 => 0,
+            MapperState::Mapper1 { .. } => 1,
+            MapperState::Mapper2 { .. } => 2,
+            MapperState::Mapper3 { .. } => 3,
+            MapperState::Mapper4 { .. } => 4,
+            MapperState::Mapper7 { .. } => 7,
+            MapperState::Other => 255,
+        }
+    }
+    
+    pub fn get_mapper_state(&self) -> MapperState {
+        self.mapper.get_state()
+    }
+    
+    pub fn set_mapper_state(&mut self, state: &MapperState) {
+        self.mapper.set_state(state);
     }
 }

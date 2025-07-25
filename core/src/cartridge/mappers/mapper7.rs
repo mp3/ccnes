@@ -1,4 +1,4 @@
-use crate::cartridge::Mapper;
+use crate::cartridge::{Mapper, MapperState};
 
 // Mapper 7: AxROM
 // Used by games like Battletoads, Wizards & Warriors, etc.
@@ -71,6 +71,20 @@ impl Mapper for Mapper7 {
         // CHR RAM
         if addr < 0x2000 {
             self.chr_ram[addr as usize] = value;
+        }
+    }
+    
+    fn get_state(&self) -> MapperState {
+        MapperState::Mapper7 {
+            prg_bank: self.prg_bank,
+            mirroring_mode: self.mirroring_mode,
+        }
+    }
+    
+    fn set_state(&mut self, state: &MapperState) {
+        if let MapperState::Mapper7 { prg_bank, mirroring_mode } = state {
+            self.prg_bank = *prg_bank;
+            self.mirroring_mode = *mirroring_mode;
         }
     }
 }

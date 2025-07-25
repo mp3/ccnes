@@ -1,4 +1,4 @@
-use crate::cartridge::Mapper;
+use crate::cartridge::{Mapper, MapperState};
 
 #[derive(Debug)]
 pub struct Mapper2 {
@@ -49,5 +49,17 @@ impl Mapper for Mapper2 {
     
     fn write_chr(&mut self, _addr: u16, _value: u8) {
         // CHR RAM if present
+    }
+    
+    fn get_state(&self) -> MapperState {
+        MapperState::Mapper2 {
+            prg_bank: self.prg_bank,
+        }
+    }
+    
+    fn set_state(&mut self, state: &MapperState) {
+        if let MapperState::Mapper2 { prg_bank } = state {
+            self.prg_bank = *prg_bank;
+        }
     }
 }

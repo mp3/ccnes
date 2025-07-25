@@ -1,4 +1,4 @@
-use crate::cartridge::Mapper;
+use crate::cartridge::{Mapper, MapperState};
 
 // Mapper 11: Color Dreams
 // Used by some unlicensed games
@@ -76,5 +76,13 @@ impl Mapper for Mapper11 {
     
     fn write_chr(&mut self, _addr: u16, _value: u8) {
         // CHR ROM is not writable in mapper 11
+    }
+    
+    fn get_state(&self) -> MapperState {
+        MapperState::Other
+    }
+    
+    fn set_state(&mut self, _state: &MapperState) {
+        // Mapper 11 state restoration not implemented yet
     }
 }

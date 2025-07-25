@@ -1,4 +1,4 @@
-use crate::cartridge::Mapper;
+use crate::cartridge::{Mapper, MapperState};
 
 #[derive(Debug)]
 pub struct Mapper1 {
@@ -123,5 +123,36 @@ impl Mapper for Mapper1 {
     
     fn write_chr(&mut self, _addr: u16, _value: u8) {
         // CHR writes would go to CHR RAM if present
+    }
+    
+    fn get_state(&self) -> MapperState {
+        MapperState::Mapper1 {
+            shift_register: self.shift_register,
+            shift_count: self.shift_count,
+            prg_bank_mode: (self.control >> 2) & 0x03,
+            chr_bank_mode: (self.control >> 4) & 0x01,
+            prg_bank: self.prg_bank,
+            chr_bank0: self.chr_bank0,
+            chr_bank1: self.chr_bank1,
+        }
+    }
+    
+    fn set_state(&mut self, state: &MapperState) {
+        if let MapperState::Mapper1 {
+            shift_register,
+            shift_count,
+            prg_bank_mode,
+            chr_bank_mode,
+            prg_bank,
+            chr_bank0,
+            chr_bank1,
+        } = state {
+            self.shift_register = *shift_register;
+            self.shift_count = *shift_count;
+            self.control = (*prg_bank_mode << 2) | (*chr_bank_mode << 4);
+            self.prg_bank = *prg_bank;
+            self.chr_bank0 = *chr_bank0;
+            self.chr_bank1 = *chr_bank1;
+        }
     }
 }

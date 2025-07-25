@@ -1,4 +1,4 @@
-use crate::cartridge::Mapper;
+use crate::cartridge::{Mapper, MapperState};
 
 // Mapper 5: MMC5 (Memory Management Controller 5)
 // One of the most complex mappers, used by games like Castlevania III
@@ -266,5 +266,14 @@ impl Mapper for Mapper5 {
     
     fn write_chr(&mut self, _addr: u16, _value: u8) {
         // CHR ROM is not writable in mapper 5
+    }
+    
+    fn get_state(&self) -> MapperState {
+        // Mapper 5 is complex - return Other for now
+        MapperState::Other
+    }
+    
+    fn set_state(&mut self, _state: &MapperState) {
+        // Mapper 5 state restoration not implemented yet
     }
 }

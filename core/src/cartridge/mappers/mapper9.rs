@@ -1,4 +1,4 @@
-use crate::cartridge::Mapper;
+use crate::cartridge::{Mapper, MapperState};
 
 // Mapper 9: MMC2 (Memory Management Controller 2)
 // Used by Mike Tyson's Punch-Out!!
@@ -156,5 +156,13 @@ impl Mapper for Mapper9 {
     
     fn write_chr(&mut self, _addr: u16, _value: u8) {
         // CHR ROM is not writable in mapper 9
+    }
+    
+    fn get_state(&self) -> MapperState {
+        MapperState::Other
+    }
+    
+    fn set_state(&mut self, _state: &MapperState) {
+        // Mapper 9 state restoration not implemented yet
     }
 }
